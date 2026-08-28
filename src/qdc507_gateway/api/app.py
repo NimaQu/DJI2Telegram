@@ -123,10 +123,10 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             raise HTTPException(status_code=401, detail="Bearer token required")
         from qdc507_gateway.security import verify_token
         token = authorization[7:].strip()
-        for row in database.tokens():
-            if verify_token(token, row["token_hash"]):
-                auth_limiter.record_success(identity)
-                return row["token_id"]
+        row = database.token()
+        if row is not None and verify_token(token, row["token_hash"]):
+            auth_limiter.record_success(identity)
+            return "api"
         decision = auth_limiter.record_failure(identity)
         if decision.newly_blocked:
             await events.publish(GatewayEvent("security.auth_blocked", {

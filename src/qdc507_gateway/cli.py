@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import datetime as dt
 import json
-import secrets
 import sys
 from pathlib import Path
 
@@ -39,33 +38,28 @@ def _probe(args: argparse.Namespace, _settings: Settings) -> int:
     return 0 if report.found else 2
 
 
-def _token(args: argparse.Namespace, settings: Settings) -> int:
+def _token(_args: argparse.Namespace, settings: Settings) -> int:
     token = new_token()
-    token_id = args.token_id or secrets.token_hex(8)
-    data_dir = Path(args.data_dir).expanduser() if args.data_dir else settings.data_dir
-    database = Database(data_dir / "gateway.sqlite3")
-    database.save_token(
-        token_id,
-        hash_token(token),
-        dt.datetime.now(dt.timezone.utc).isoformat(),
-    )
-    database.close()
-    print(json.dumps({"token_id": token_id, "token": token}, indent=2))
-    return 0
-
-
-def _token_revoke(args: argparse.Namespace, settings: Settings) -> int:
-    data_dir = Path(args.data_dir).expanduser() if args.data_dir else settings.data_dir
-    database = Database(data_dir / "gateway.sqlite3")
+    database = Database(settings.database_path)
     try:
-        revoked = database.revoke_token(
-            args.token_id,
+        replaced = database.replace_token(
+            hash_token(token),
             dt.datetime.now(dt.timezone.utc).isoformat(),
         )
     finally:
         database.close()
-    print(json.dumps({"token_id": args.token_id, "revoked": revoked}, indent=2))
-    return 0 if revoked else 1
+    print(json.dumps({"token": token, "replaced_existing": replaced}, indent=2))
+    return 0
+
+
+def _token_delete(_args: argparse.Namespace, settings: Settings) -> int:
+    database = Database(settings.database_path)
+    try:
+        deleted = database.delete_token()
+    finally:
+        database.close()
+    print(json.dumps({"deleted": deleted}, indent=2))
+    return 0
 
 
 def _telegram_login(args: argparse.Namespace, settings: Settings) -> int:
@@ -228,15 +222,17 @@ def main(argv=None) -> int:
     probe.add_argument("--json", action="store_true", help="emit JSON output")
     probe.set_defaults(handler=_probe)
 
-    token = subparsers.add_parser("token", help="create a token; only its hash is persisted")
-    token.add_argument("--data-dir", help="override app.data_dir")
-    token.add_argument("--token-id")
+    token = subparsers.add_parser(
+        "token",
+        help="create the only API token, replacing any existing token",
+    )
     token.set_defaults(handler=_token)
 
-    revoke = subparsers.add_parser("token-revoke", help="revoke an API token")
-    revoke.add_argument("token_id")
-    revoke.add_argument("--data-dir", help="override app.data_dir")
-    revoke.set_defaults(handler=_token_revoke)
+    token_delete = subparsers.add_parser(
+        "token-delete",
+        help="delete the API token and disable authenticated API access",
+    )
+    token_delete.set_defaults(handler=_token_delete)
 
     telegram = subparsers.add_parser("telegram-login", help="create a Kurigram User API session")
     telegram.add_argument("--api-id", type=int)

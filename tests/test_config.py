@@ -100,7 +100,7 @@ def test_invalid_log_level_and_auth_limits_are_rejected(tmp_path):
         Settings.load(config, environ={})
 
 
-def test_token_command_uses_fixed_project_toml(tmp_path, capsys, monkeypatch):
+def test_token_commands_replace_and_delete_the_single_token(tmp_path, capsys, monkeypatch):
     config = tmp_path / "config.toml"
     config.write_text(
         """
@@ -110,16 +110,27 @@ data_dir = "data"
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    assert main(["token", "--token-id", "toml-token"]) == 0
-    output = json.loads(capsys.readouterr().out)
-    assert output["token_id"] == "toml-token"
-    assert set(output) == {"token_id", "token"}
+    assert main(["token"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert set(first) == {"token", "replaced_existing"}
+    assert first["replaced_existing"] is False
+
+    assert main(["token"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["replaced_existing"] is True
+    assert second["token"] != first["token"]
 
     database = Database(tmp_path / "data/gateway.sqlite3")
-    row = dict(database.tokens()[0])
+    row = dict(database.token())
     database.close()
-    assert row["token_id"] == "toml-token"
-    assert output["token"] not in row["token_hash"]
+    assert first["token"] not in row["token_hash"]
+    assert second["token"] not in row["token_hash"]
+
+    assert main(["token-delete"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"deleted": True}
+    database = Database(tmp_path / "data/gateway.sqlite3")
+    assert database.token() is None
+    database.close()
 
 
 def test_config_check_never_prints_telegram_api_hash(tmp_path, capsys, monkeypatch):

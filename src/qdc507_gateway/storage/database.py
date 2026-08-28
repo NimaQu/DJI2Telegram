@@ -42,12 +42,12 @@ CREATE TABLE IF NOT EXISTS module_events (
   payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS api_tokens (
-  token_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS api_token (
+  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
   token_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  revoked_at TEXT
+  created_at TEXT NOT NULL
 );
+DROP TABLE IF EXISTS api_tokens;
 """
 
 
@@ -75,27 +75,38 @@ class Database:
     def close(self) -> None:
         self.connection.close()
 
-    def save_token(self, token_id: str, token_hash: str, created_at: str) -> None:
+    def replace_token(self, token_hash: str, created_at: str) -> bool:
+        """Replace the singleton API token and return whether one existed."""
         with self._lock:
+            existed = self.connection.execute(
+                "SELECT 1 FROM api_token WHERE singleton = 1"
+            ).fetchone() is not None
             self.connection.execute(
-                "INSERT INTO api_tokens(token_id, token_hash, created_at) VALUES (?, ?, ?)",
-                (token_id, token_hash, created_at),
+                """
+                INSERT INTO api_token(singleton, token_hash, created_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(singleton) DO UPDATE SET
+                  token_hash = excluded.token_hash,
+                  created_at = excluded.created_at
+                """,
+                (token_hash, created_at),
             )
             self.connection.commit()
+            return existed
 
-    def revoke_token(self, token_id: str, revoked_at: str) -> bool:
+    def delete_token(self) -> bool:
         with self._lock:
             cursor = self.connection.execute(
-                "UPDATE api_tokens SET revoked_at = ? "
-                "WHERE token_id = ? AND revoked_at IS NULL",
-                (revoked_at, token_id),
+                "DELETE FROM api_token WHERE singleton = 1"
             )
             self.connection.commit()
             return cursor.rowcount == 1
 
-    def tokens(self) -> List[sqlite3.Row]:
+    def token(self) -> Optional[sqlite3.Row]:
         with self._lock:
-            return list(self.connection.execute("SELECT * FROM api_tokens WHERE revoked_at IS NULL"))
+            return self.connection.execute(
+                "SELECT token_hash, created_at FROM api_token WHERE singleton = 1"
+            ).fetchone()
 
     def insert_event(self, event_type: str, payload: str, created_at: str) -> None:
         with self._lock:

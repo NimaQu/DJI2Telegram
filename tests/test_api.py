@@ -12,7 +12,7 @@ from qdc507_gateway.storage.database import Database
 def _client():
     database = Database(":memory:")
     token = "offline-test-token"
-    database.save_token("test", hash_token(token), "2026-01-01T00:00:00Z")
+    database.replace_token(hash_token(token), "2026-01-01T00:00:00Z")
     state = {"status": {"service": "test", "module_state": "disconnected"}}
     async def at(command, timeout_ms):
         return {"command": command, "timeout_ms": timeout_ms}
@@ -55,7 +55,7 @@ def test_sse_keepalive_does_not_close_event_subscription():
 def test_status_can_include_live_transport_state():
     database = Database(":memory:")
     token = "status-token"
-    database.save_token("status", hash_token(token), "2026-01-01T00:00:00Z")
+    database.replace_token(hash_token(token), "2026-01-01T00:00:00Z")
     state = {
         "status": {"service": "test", "module_state": "connected"},
         "get_status": lambda: {
@@ -77,7 +77,7 @@ def test_status_can_include_live_transport_state():
 def test_module_status_can_be_refreshed_explicitly():
     database = Database(":memory:")
     token = "module-status-token"
-    database.save_token("status", hash_token(token), "2026-01-01T00:00:00Z")
+    database.replace_token(hash_token(token), "2026-01-01T00:00:00Z")
 
     async def refresh():
         return {
@@ -103,7 +103,7 @@ def test_module_status_can_be_refreshed_explicitly():
 def test_repeated_token_failures_are_temporarily_blocked():
     database = Database(":memory:")
     token = "valid-token"
-    database.save_token("valid", hash_token(token), "2026-01-01T00:00:00Z")
+    database.replace_token(hash_token(token), "2026-01-01T00:00:00Z")
     now = [100.0]
     limiter = AuthFailureLimiter(
         max_failures=3,
@@ -157,20 +157,49 @@ def test_dangerous_at_requires_confirmation_and_qadbkey_is_dedicated():
 
 def test_token_database_stores_only_hash():
     database = Database(":memory:")
-    database.save_token("id", hash_token("one-time-token"), "2026-01-01T00:00:00Z")
-    row = dict(database.tokens()[0])
-    assert row["token_id"] == "id"
+    assert not database.replace_token(
+        hash_token("one-time-token"),
+        "2026-01-01T00:00:00Z",
+    )
+    row = dict(database.token())
     assert "one-time-token" not in row["token_hash"]
     assert "one-time-token" not in str(row)
 
 
-def test_revoked_token_is_not_accepted():
+def test_replacing_or_deleting_the_single_token_invalidates_the_old_value():
     database = Database(":memory:")
-    token = "revocable-token"
-    database.save_token("revocable", hash_token(token), "2026-01-01T00:00:00Z")
-    assert database.revoke_token("revocable", "2026-01-02T00:00:00Z")
-    assert database.tokens() == []
-    assert not database.revoke_token("revocable", "2026-01-03T00:00:00Z")
+    old_token = "old-token"
+    new_token = "new-token"
+    assert not database.replace_token(
+        hash_token(old_token),
+        "2026-01-01T00:00:00Z",
+    )
+    client = TestClient(create_app(database, EventBus(), {"status": {}}))
+    assert client.get(
+        "/api/v1/status",
+        headers={"Authorization": "Bearer " + old_token},
+    ).status_code == 200
+
+    assert database.replace_token(
+        hash_token(new_token),
+        "2026-01-02T00:00:00Z",
+    )
+    assert client.get(
+        "/api/v1/status",
+        headers={"Authorization": "Bearer " + old_token},
+    ).status_code == 401
+    assert client.get(
+        "/api/v1/status",
+        headers={"Authorization": "Bearer " + new_token},
+    ).status_code == 200
+
+    assert database.delete_token()
+    assert database.token() is None
+    assert not database.delete_token()
+    assert client.get(
+        "/api/v1/status",
+        headers={"Authorization": "Bearer " + new_token},
+    ).status_code == 401
 
 
 def test_at_input_bounds_are_rejected():
@@ -191,7 +220,7 @@ def test_at_input_bounds_are_rejected():
 def test_live_operation_failure_is_not_reported_as_success():
     database = Database(":memory:")
     token = "offline-admin-token"
-    database.save_token("admin", hash_token(token), "2026-01-01T00:00:00Z")
+    database.replace_token(hash_token(token), "2026-01-01T00:00:00Z")
 
     async def unavailable(*args):
         raise RuntimeError("QDC507 module operation unavailable: LiveUSBError")

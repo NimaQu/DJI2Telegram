@@ -385,8 +385,7 @@ def test_audio_diagnostic_uses_alsa_media_path_without_cellular_commands():
 def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     database = Database(":memory:")
     token = "web-test-token"
-    database.save_token(
-        "web",
+    database.replace_token(
         hash_token(token),
         "2026-01-01T00:00:00Z",
     )

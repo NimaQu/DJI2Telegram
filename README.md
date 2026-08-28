@@ -170,12 +170,15 @@ Bot 才能主动发送短信和来电通知。
 sudo /usr/local/bin/uv run --frozen python gateway.py token
 ```
 
-明文 Token 只显示这一次。SQLite 只保存 scrypt hash；任意未撤销 Token 都拥有全部 API 权限。
-网页会把 Token 保存在当前站点的 `localStorage`。如需撤销：
+明文 Token 只显示这一次，SQLite 只保存一个 scrypt hash。再次执行 `token` 会立即替换旧 Token，
+旧值不能再用于新的 REST、SSE 或音频票据请求。网页会把 Token 保存在当前站点的 `localStorage`。
+如果只使用 Telegram、不需要 Web/API，可以删除 Token：
 
 ```sh
-sudo /usr/local/bin/uv run --frozen python gateway.py token-revoke <token-id>
+sudo /usr/local/bin/uv run --frozen python gateway.py token-delete
 ```
+
+删除后所有 Bearer 认证请求都会返回 HTTP 401；重新执行 `token` 即可恢复 API 访问。
 
 ## 5. 首次前台启动
 
