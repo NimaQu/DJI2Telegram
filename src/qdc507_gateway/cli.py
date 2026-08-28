@@ -6,7 +6,6 @@ import datetime as dt
 import json
 import secrets
 import sys
-import tempfile
 from pathlib import Path
 
 from qdc507_gateway.config import PROJECT_CONFIG_FILE, Settings
@@ -97,42 +96,6 @@ def _telegram_login(args: argparse.Namespace, settings: Settings) -> int:
     ensure_session_permissions(session_path)
     print(f"Telegram session ready: {session_path}")
     return 0
-
-
-def _telegram_compat(_args: argparse.Namespace, _settings: Settings) -> int:
-    """Probe Kurigram/PyTgCalls surfaces without login or a phone call."""
-    from qdc507_gateway.telegram.compatibility import (
-        probe_kurigram_client,
-        probe_kurigram_pytgcalls_runtime,
-        probe_kurigram_raw_phone_types,
-    )
-    from qdc507_gateway.telegram.kurigram import create_kurigram_client
-
-    with tempfile.TemporaryDirectory(prefix="qdc507-telegram-compat-") as workdir:
-        client = create_kurigram_client("compat", 1, "0" * 32, workdir)
-        client_report = probe_kurigram_client(client)
-        raw_report = probe_kurigram_raw_phone_types()
-        bridge_report = probe_kurigram_pytgcalls_runtime(client)
-    result = {
-        "provider": "kurigram",
-        "import_namespace": "pyrogram",
-        "login_performed": False,
-        "call_performed": False,
-        "message_client": {
-            "passed": client_report.passed,
-            "missing": list(client_report.missing),
-        },
-        "pytgcalls_runtime": {
-            "passed": bridge_report.passed,
-            "missing": list(bridge_report.missing),
-        },
-        "raw_phone_types": {
-            "passed": raw_report.passed,
-            "missing": list(raw_report.missing),
-        },
-    }
-    print(json.dumps(result, indent=2))
-    return 0 if client_report.passed and raw_report.passed and bridge_report.passed else 2
 
 
 def _adb_authorize(args: argparse.Namespace, settings: Settings) -> int:
@@ -280,12 +243,6 @@ def main(argv=None) -> int:
     telegram.add_argument("--api-hash")
     telegram.add_argument("--session")
     telegram.set_defaults(handler=_telegram_login)
-
-    compat = subparsers.add_parser(
-        "telegram-compat",
-        help="probe Kurigram/PyTgCalls APIs without login or a call",
-    )
-    compat.set_defaults(handler=_telegram_compat)
 
     adb_authorize = subparsers.add_parser(
         "adb-authorize",

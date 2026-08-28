@@ -156,7 +156,6 @@ sudo /usr/local/bin/uv run --frozen python gateway.py adb-authorize --confirm
 ```sh
 cd /opt/qdc507-gateway
 sudo /usr/local/bin/uv run --frozen python gateway.py telegram-login
-sudo /usr/local/bin/uv run --frozen python gateway.py telegram-compat
 ```
 
 `telegram-login` 会交互询问 User 账号手机号、验证码和两步验证密码。安装的发行包是 `kurigram`，
@@ -351,7 +350,7 @@ sudo journalctl -u qdc507-gateway.service -n 200 --no-pager
 1. USB 直通后 `lsusb` 与 descriptor probe；
 2. `uv sync --frozen`、复制 TOML、`config-check`；
 3. 停止服务并执行一次 `module-setup --confirm`，完成 USBCFG、QADBKEY 和 voice runtime 自检；
-4. `telegram-login`、`telegram-compat`、创建 API Token；
+4. `telegram-login`、创建 API Token；
 5. 前台启动并请求 `module?refresh=true`；
 6. 安装并启动 systemd，检查 journald；
 7. 配置 Tailscale Serve，从 HTTPS 网页连接；
