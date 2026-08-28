@@ -8,6 +8,52 @@ Kurigram User session 只负责私人语音呼叫。
 读取项目根目录的 `config.toml`，运行数据保存在 `data/`。默认以 root 运行，方便访问 USB、ALSA 和
 模块 voice runtime。
 
+> [!WARNING]
+> **不要使用 Debian `cloud-amd64` 内核。** DJI2Telegram 需要 USB host、libusb 和 USB Audio/UAC；
+> Debian cloud 内核可能裁掉这些支持，表现为 Proxmox 已配置 USB 直通，但 VM 内 `lsusb` 看不到
+> QDC507，甚至看不到 USB root hub。必须启动通用的 `linux-image-amd64` 内核。
+
+先检查当前内核：
+
+```sh
+uname -r
+grep -E 'CONFIG_USB_SUPPORT|CONFIG_USB=|CONFIG_USB_XHCI_HCD|CONFIG_SND_USB_AUDIO' \
+  /boot/config-$(uname -r)
+```
+
+如果 `uname -r` 包含 `-cloud-amd64`，或配置显示 `# CONFIG_USB_SUPPORT is not set`，安装通用内核：
+
+```sh
+sudo apt-get update
+sudo apt-get install -y linux-image-amd64
+sudo update-grub
+```
+
+在 Proxmox Console 重启 VM，进入 GRUB 的 `Advanced options for Debian GNU/Linux`，选择名称中包含
+`amd64`、但**不包含** `cloud-amd64` 的最新内核。通用内核安装后，GRUB 仍可能优先启动同版本 cloud
+内核，因此不能只安装后直接假定切换成功。启动后必须确认：
+
+```sh
+uname -r                         # 必须以 -amd64 结尾，不能包含 -cloud-amd64
+lsusb -d 2c7c:0125
+aplay -l
+arecord -l
+```
+
+只有确认通用内核、USB 和 UAC 均正常后，才列出并删除 cloud 元包以及与通用内核同版本的 cloud
+image，再次更新 GRUB：
+
+```sh
+dpkg -l 'linux-image-*cloud-amd64' | grep '^ii'
+# 根据上一行填写实际包名；下面的版本号仅为示例：
+sudo apt-get remove linux-image-cloud-amd64 linux-image-6.12.105+deb13-cloud-amd64
+sudo update-grub
+```
+
+可以暂时保留一个更旧的 cloud image 作为紧急回退。在通用内核成功启动前，不要删除当前 cloud 内核，
+也不要执行 `apt autoremove`。如果通用内核下仍只有 USB root hub 而没有 `2c7c:0125`，再检查
+Proxmox VM 的 USB passthrough；这时才是直通问题。
+
 ## 功能
 
 - 收取、保存、转发和确认后发送 SMS；
@@ -38,7 +84,7 @@ sudo -i
 ```sh
 sudo apt-get update
 sudo apt-get install -y \
-  git curl ca-certificates build-essential pkg-config python3 python3-dev \
+  git curl ca-certificates build-essential pkg-config python3 python3-dev linux-image-amd64 \
   libusb-1.0-0 libusb-1.0-0-dev libudev-dev \
   libasound2t64 libasound2-dev usbutils alsa-utils
 ```
