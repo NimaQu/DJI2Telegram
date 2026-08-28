@@ -37,6 +37,12 @@ class SMSDraft:
     sending: bool = False
 
 
+@dataclass
+class UserLoginConversation:
+    stage: str
+    expires_at: float
+
+
 class CommandError(ValueError):
     pass
 
@@ -171,13 +177,18 @@ class TelegramCommandRouter:
         hangup: Callable[[Optional[str]], Any],
         sms_draft_ttl_seconds: float = 600.0,
         *,
+        user_login_ttl_seconds: float = 600.0,
         begin_user_login: Optional[Callable[[str], Any]] = None,
         submit_user_code: Optional[Callable[[str], Any]] = None,
         submit_user_password: Optional[Callable[[str], Any]] = None,
+        cancel_user_login: Optional[Callable[[], Any]] = None,
+        user_login_state: Optional[Callable[[], Any]] = None,
         restart_service: Optional[Callable[[], Any]] = None,
     ):
         if sms_draft_ttl_seconds <= 0:
             raise ValueError("SMS draft lifetime must be positive")
+        if user_login_ttl_seconds <= 0:
+            raise ValueError("User login lifetime must be positive")
         self.user_id = int(user_id)
         self.allowed_ids = (self.user_id,)
         self.status = status
@@ -187,10 +198,22 @@ class TelegramCommandRouter:
         self.begin_user_login = begin_user_login
         self.submit_user_code = submit_user_code
         self.submit_user_password = submit_user_password
+        self.cancel_user_login = cancel_user_login
+        self.user_login_state = user_login_state
         self.restart_service = restart_service
         self.sms_draft_ttl_seconds = sms_draft_ttl_seconds
+        self.user_login_ttl_seconds = user_login_ttl_seconds
         self._sms_draft: Optional[SMSDraft] = None
+        self._user_login: Optional[UserLoginConversation] = None
         self._sms_lock = asyncio.Lock()
+        self._user_login_lock = asyncio.Lock()
+
+    def is_sensitive_input(self, text: str) -> bool:
+        stripped = text.strip()
+        command = stripped.lower().split(" ", 1)[0].split("@", 1)[0]
+        if command in {"/userlogin", "/usercode", "/userpassword"}:
+            return True
+        return bool(stripped and self._user_login is not None)
 
     async def dispatch(self, sender_id: int, text: str) -> Optional[TelegramResponse]:
         authorize_sender(sender_id, self.allowed_ids)
@@ -198,6 +221,8 @@ class TelegramCommandRouter:
         if not stripped:
             raise CommandError("短信内容不能为空")
         if not stripped.startswith("/"):
+            if self._user_login is not None:
+                return await self._advance_user_login(text)
             return await self._update_sms_draft(text)
 
         command = parse_command(text)
@@ -212,7 +237,7 @@ class TelegramCommandRouter:
                 "/hangup 挂断当前通话"
             )
             if self.begin_user_login is not None:
-                text += "\n/userlogin <号码> 重新登录 Telegram User"
+                text += "\n/userlogin 交互式重新登录 Telegram User"
             if self.restart_service is not None:
                 text += "\n/restart 重启网关服务"
             return TelegramResponse(text)
@@ -233,6 +258,8 @@ class TelegramCommandRouter:
         if command.name == "sendsms":
             if len(command.args) != 1:
                 raise CommandError("用法: /sendsms <电话号码>")
+            if self._user_login is not None:
+                raise CommandError("请先完成 User 登录，或使用 /cancel 取消")
             return await self._begin_sms_draft(validate_call_number(command.args[0]))
         if command.name == "confirm":
             if command.args:
@@ -241,6 +268,8 @@ class TelegramCommandRouter:
         if command.name == "cancel":
             if command.args:
                 raise CommandError("/cancel 不接受参数")
+            if self._user_login is not None:
+                return await self._cancel_user_login()
             return await self._cancel_sms(None)
         if command.name == "hangup":
             if len(command.args) > 1:
@@ -250,28 +279,33 @@ class TelegramCommandRouter:
         if command.name == "userlogin":
             if self.begin_user_login is None:
                 raise CommandError("Telegram User 在线重登未启用")
-            if len(command.args) != 1:
-                raise CommandError("用法: /userlogin <User 账号手机号>")
-            phone = validate_call_number(command.args[0])
-            detail = await self._maintenance_call(self.begin_user_login, phone)
-            return TelegramResponse(f"[Telegram User 登录]\n{detail}")
+            if len(command.args) > 1:
+                raise CommandError("用法: /userlogin")
+            return await self._begin_user_login(
+                command.args[0] if command.args else None
+            )
         if command.name == "usercode":
             if self.submit_user_code is None:
                 raise CommandError("Telegram User 在线重登未启用")
             if len(command.args) != 1:
                 raise CommandError("用法: /usercode <验证码>")
-            detail = await self._maintenance_call(self.submit_user_code, command.args[0])
-            return TelegramResponse(f"[Telegram User 登录]\n{detail}")
+            async with self._user_login_lock:
+                self._user_login = UserLoginConversation(
+                    "code",
+                    time.monotonic() + self.user_login_ttl_seconds,
+                )
+                return await self._submit_user_code_locked(command.args[0])
         if command.name == "userpassword":
             if self.submit_user_password is None:
                 raise CommandError("Telegram User 在线重登未启用")
             if len(command.args) != 1:
                 raise CommandError("用法: /userpassword <两步验证密码>")
-            detail = await self._maintenance_call(
-                self.submit_user_password,
-                command.args[0],
-            )
-            return TelegramResponse(f"[Telegram User 登录]\n{detail}")
+            async with self._user_login_lock:
+                self._user_login = UserLoginConversation(
+                    "password",
+                    time.monotonic() + self.user_login_ttl_seconds,
+                )
+                return await self._submit_user_password_locked(command.args[0])
         if command.name == "restart":
             if self.restart_service is None:
                 raise CommandError("Bot 重启服务未启用")
@@ -280,6 +314,93 @@ class TelegramCommandRouter:
             detail = await self._maintenance_call(self.restart_service)
             return TelegramResponse(f"[重启服务]\n{detail}")
         raise CommandError("unsupported gateway command")
+
+    async def _begin_user_login(self, phone: Optional[str]) -> TelegramResponse:
+        async with self._sms_lock:
+            draft = self._sms_draft
+            if draft is not None and draft.expires_at > time.monotonic():
+                raise CommandError("请先完成短信草稿，或使用 /cancel 取消")
+            if draft is not None:
+                self._sms_draft = None
+        async with self._user_login_lock:
+            if self._user_login is not None and self.cancel_user_login is not None:
+                await self._maintenance_call(self.cancel_user_login)
+            self._user_login = UserLoginConversation(
+                "phone",
+                time.monotonic() + self.user_login_ttl_seconds,
+            )
+            if phone is None:
+                return TelegramResponse(
+                    "[Telegram User 登录]\n请直接回复 User 账号手机号，例如 +8613800138000。\n"
+                    "使用 /cancel 可取消登录。"
+                )
+            return await self._submit_user_phone_locked(phone)
+
+    async def _advance_user_login(self, value: str) -> TelegramResponse:
+        async with self._user_login_lock:
+            conversation = self._user_login
+            if conversation is None:
+                raise CommandError("没有待处理的 User 登录，请使用 /userlogin")
+            if conversation.expires_at <= time.monotonic():
+                self._user_login = None
+                if self.cancel_user_login is not None:
+                    await self._maintenance_call(self.cancel_user_login)
+                raise CommandError("User 登录流程已过期，请重新使用 /userlogin")
+            if conversation.stage == "phone":
+                return await self._submit_user_phone_locked(value)
+            if conversation.stage == "code":
+                return await self._submit_user_code_locked(value)
+            if conversation.stage == "password":
+                return await self._submit_user_password_locked(value)
+            self._user_login = None
+            raise CommandError("User 登录流程状态无效，请重新使用 /userlogin")
+
+    async def _submit_user_phone_locked(self, phone: str) -> TelegramResponse:
+        assert self.begin_user_login is not None
+        normalized = validate_call_number(phone.strip())
+        detail = await self._maintenance_call(self.begin_user_login, normalized)
+        self._user_login = UserLoginConversation(
+            "code",
+            time.monotonic() + self.user_login_ttl_seconds,
+        )
+        return TelegramResponse(
+            f"[Telegram User 登录]\n{detail}\n请直接回复验证码，或使用 /cancel 取消。"
+        )
+
+    async def _submit_user_code_locked(self, code: str) -> TelegramResponse:
+        assert self.submit_user_code is not None
+        detail = await self._maintenance_call(self.submit_user_code, code)
+        state = None
+        if self.user_login_state is not None:
+            state = await self._call(self.user_login_state)
+        password_required = (
+            state == "login_password_required"
+            or (state is None and "两步验证" in str(detail))
+        )
+        if password_required:
+            self._user_login = UserLoginConversation(
+                "password",
+                time.monotonic() + self.user_login_ttl_seconds,
+            )
+            return TelegramResponse(
+                f"[Telegram User 登录]\n{detail}\n请直接回复两步验证密码，或使用 /cancel 取消。"
+            )
+        self._user_login = None
+        return TelegramResponse(f"[Telegram User 登录]\n{detail}")
+
+    async def _submit_user_password_locked(self, password: str) -> TelegramResponse:
+        assert self.submit_user_password is not None
+        detail = await self._maintenance_call(self.submit_user_password, password)
+        self._user_login = None
+        return TelegramResponse(f"[Telegram User 登录]\n{detail}")
+
+    async def _cancel_user_login(self) -> TelegramResponse:
+        async with self._user_login_lock:
+            self._user_login = None
+            detail = "User 登录已取消。"
+            if self.cancel_user_login is not None:
+                detail = str(await self._maintenance_call(self.cancel_user_login))
+            return TelegramResponse(f"[Telegram User 登录]\n{detail}")
 
     async def dispatch_callback(
         self,

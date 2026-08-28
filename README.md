@@ -256,14 +256,14 @@ HTTP、SSE 和 WebSocket。不要使用 `tailscale funnel`，除非明确希望�
 - `/call <号码>`：先接通 Telegram，再由模块拨号；
 - `/sendsms <号码>`：创建草稿，回复内容后通过“发送/取消”按钮确认；
 - `/hangup`：挂断当前通话；
-- `/userlogin <User账号手机号>`：User session 失效时发送新验证码；
-- `/usercode <验证码>`：提交登录验证码；
-- `/userpassword <两步验证密码>`：仅在账号启用两步验证时使用；
+- `/userlogin`：交互式恢复 User session；Bot 会依次询问手机号、验证码，并仅在需要时询问两步验证密码；
+- `/cancel`：取消当前短信草稿或 User 登录流程；
 - `/restart`：仅当 `telegram.allow_service_restart = true` 时通过 systemd 重启服务。
 
 Bot 和 User 客户端相互独立：User session 缺失或启动失败时，Bot 仍会在线并显示“需要登录”。在线
-重登成功后会把旧 session 备份为 `telegram.session.bak`，再启动新的通话客户端。Bot 会尽力删除包含
-手机号、验证码或密码的命令消息，但 Telegram 聊天不是最理想的密码输入通道；能够 SSH 时优先使用
+重登成功后会把旧 session 备份为 `telegram.session.bak`，再启动新的通话客户端。交互过程中直接回复
+Bot 即可，不需要手动输入 `/usercode` 或 `/userpassword`。Bot 会尽力删除包含手机号、验证码或密码的
+回复消息，但 Telegram 聊天不是最理想的密码输入通道；能够 SSH 时优先使用
 `telegram-login`。登录流程 10 分钟后自动失效，通话或音频会话期间拒绝重登。
 
 `/restart` 只适用于本 README 的 root systemd 部署。修改配置后必须先启用该选项并手动重启一次，

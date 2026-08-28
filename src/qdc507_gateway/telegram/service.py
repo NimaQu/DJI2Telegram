@@ -221,7 +221,7 @@ class KurigramTelegramService:
                 self.state = "login_code_required"
                 self.last_error = None
                 await self.events.publish(GatewayEvent("telegram.login_code_required", {}))
-                return "验证码已发送。请使用 /usercode <验证码> 继续。"
+                return "验证码已发送。"
             except Exception as exc:
                 await self._disconnect_login_client(client)
                 self._remove_login_files(temporary_path)
@@ -248,7 +248,7 @@ class KurigramTelegramService:
                 if type(exc).__name__ == "SessionPasswordNeeded":
                     attempt.password_required = True
                     self.state = "login_password_required"
-                    return "该账号启用了两步验证。请使用 /userpassword <密码> 继续。"
+                    return "该账号启用了两步验证。"
                 self.last_error = type(exc).__name__
                 raise TelegramServiceError("验证码无效或已过期") from exc
             return await self._complete_user_login_locked(attempt, user)
@@ -269,6 +269,18 @@ class KurigramTelegramService:
                 self.last_error = type(exc).__name__
                 raise TelegramServiceError("两步验证密码不正确") from exc
             return await self._complete_user_login_locked(attempt, user)
+
+    async def cancel_user_login(self) -> str:
+        async with self._login_lock:
+            had_attempt = self._login_attempt is not None
+            await self._abort_user_login_locked()
+            if had_attempt and self.session_path.is_file():
+                self.state = "stopped"
+                if await self._start_user_session():
+                    return "User 登录已取消，原有通话 session 已恢复。"
+            if had_attempt:
+                self.state = "login_required"
+            return "User 登录已取消。"
 
     async def _complete_user_login_locked(
         self,
@@ -477,6 +489,8 @@ class KurigramTelegramService:
                 begin_user_login=self.begin_user_login,
                 submit_user_code=self.submit_user_code,
                 submit_user_password=self.submit_user_password,
+                cancel_user_login=self.cancel_user_login,
+                user_login_state=lambda: self.state,
                 restart_service=self.restart_service_callback,
             )
             self.message_client = KurigramMessageClient(self.bot_client)

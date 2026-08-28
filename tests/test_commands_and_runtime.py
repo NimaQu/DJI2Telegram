@@ -152,6 +152,85 @@ def test_telegram_status_is_human_readable_and_maintenance_commands_dispatch():
     asyncio.run(run())
 
 
+def test_telegram_user_login_is_an_interactive_conversation():
+    async def run():
+        actions = []
+        login_state = {"value": "login_required"}
+
+        def begin(phone):
+            actions.append(("login", phone))
+            login_state["value"] = "login_code_required"
+            return "验证码已发送。"
+
+        def submit_code(code):
+            actions.append(("code", code))
+            login_state["value"] = "login_password_required"
+            return "该账号启用了两步验证。"
+
+        def submit_password(password):
+            actions.append(("password", password))
+            login_state["value"] = "connected"
+            return "User session 已重新登录。"
+
+        router = TelegramCommandRouter(
+            42,
+            lambda: {},
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: None,
+            begin_user_login=begin,
+            submit_user_code=submit_code,
+            submit_user_password=submit_password,
+            cancel_user_login=lambda: actions.append(("cancel",)) or "已取消。",
+            user_login_state=lambda: login_state["value"],
+        )
+
+        prompt = await router.dispatch(42, "/userlogin")
+        assert "请直接回复 User 账号手机号" in prompt.text
+        assert actions == []
+        assert router.is_sensitive_input("+14312764514")
+
+        code_prompt = await router.dispatch(42, "+1 431-276-4514")
+        assert "请直接回复验证码" in code_prompt.text
+        assert actions == [("login", "+14312764514")]
+        assert router.is_sensitive_input("12345")
+
+        password_prompt = await router.dispatch(42, "12345")
+        assert "请直接回复两步验证密码" in password_prompt.text
+        assert actions[-1] == ("code", "12345")
+        assert router.is_sensitive_input(" secret password ")
+
+        completed = await router.dispatch(42, " secret password ")
+        assert "User session 已重新登录" in completed.text
+        assert actions[-1] == ("password", " secret password ")
+        assert not router.is_sensitive_input("普通消息")
+
+    asyncio.run(run())
+
+
+def test_interactive_user_login_can_be_cancelled():
+    async def run():
+        actions = []
+        router = TelegramCommandRouter(
+            42,
+            lambda: {},
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: None,
+            begin_user_login=lambda phone: actions.append(("login", phone)) or "sent",
+            submit_user_code=lambda code: actions.append(("code", code)) or "connected",
+            submit_user_password=lambda password: None,
+            cancel_user_login=lambda: actions.append(("cancel",)) or "User 登录已取消。",
+        )
+        await router.dispatch(42, "/userlogin")
+        cancelled = await router.dispatch(42, "/cancel")
+        assert "User 登录已取消" in cancelled.text
+        assert actions == [("cancel",)]
+        assert not router.is_sensitive_input("hello")
+
+    asyncio.run(run())
+
+
 def test_human_status_handles_missing_module_metadata():
     rendered = format_human_status({"module_state": "disconnected"})
     assert "模块: 未连接" in rendered

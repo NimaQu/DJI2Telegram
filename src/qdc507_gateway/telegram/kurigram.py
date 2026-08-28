@@ -163,9 +163,7 @@ class KurigramMessageClient:
             text = getattr(message, "text", None)
             if sender is None or not text:
                 return
-            sensitive = text.strip().lower().split(" ", 1)[0].split("@", 1)[0] in {
-                "/userlogin", "/usercode", "/userpassword",
-            }
+            sensitive = router.is_sensitive_input(text)
 
             async def remove_sensitive_message() -> None:
                 if not sensitive:
