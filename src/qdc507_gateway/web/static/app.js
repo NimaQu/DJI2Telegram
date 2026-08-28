@@ -2,7 +2,7 @@ const elements = Object.fromEntries([
   "token", "connectButton", "connectionBadge", "moduleState", "moduleIdentity",
   "signalDbm", "signalQuality", "signalBars", "signalMeta",
   "callState", "callNumber", "callFrontend", "audioState", "telegramState", "audioHint",
-  "phoneNumber", "startCallButton", "answerButton", "hangupButton", "muteButton",
+  "phoneNumber", "startCallButton", "hangupButton", "muteButton",
   "diagnosticButton", "refreshButton", "smsNumber", "smsText", "smsLength", "sendSmsButton", "smsResult",
   "refreshSmsButton", "smsInbox", "eventLog", "clearEventsButton",
 ].map((id) => [id, document.getElementById(id)]));
@@ -85,11 +85,9 @@ function renderCall(call) {
     elements.callNumber.textContent = call.cellular_number || "号码未知";
     elements.callFrontend.textContent = call.frontend || "telegram";
   }
-  const isWeb = call?.frontend === "web";
-  const incoming = isWeb && call.direction === "inbound_cellular";
+  const outboundWeb = call?.frontend === "web" && call.direction === "outbound_cellular";
   elements.startCallButton.disabled = Boolean(call) || Boolean(diagnosticSession) || !browserAudioSupported;
-  elements.answerButton.disabled = !(incoming && call.state === "ringing_cellular" && browserAudioSupported);
-  elements.hangupButton.disabled = !isWeb;
+  elements.hangupButton.disabled = !outboundWeb;
   elements.diagnosticButton.disabled = Boolean(call) || !browserAudioSupported;
 }
 
@@ -495,25 +493,12 @@ async function beginOutboundCall() {
   }
 }
 
-async function answerIncomingCall() {
-  if (!currentCall || currentCall.frontend !== "web") throw new Error("当前没有网页来电");
-  await ensureBrowserAudio();
-  try {
-    if (!audioSocket) await connectAudio(
-      currentCall.id,
-      `/api/v1/calls/${encodeURIComponent(currentCall.id)}/audio-ticket`,
-      `/api/v1/calls/${encodeURIComponent(currentCall.id)}/audio`,
-    );
-    const call = await api(`/api/v1/calls/${encodeURIComponent(currentCall.id)}/answer`, { method: "POST" });
-    renderCall(call);
-  } catch (error) {
-    await closeBrowserAudio();
-    throw error;
-  }
-}
-
 async function hangupCall() {
-  if (!currentCall) return;
+  if (
+    !currentCall
+    || currentCall.frontend !== "web"
+    || currentCall.direction !== "outbound_cellular"
+  ) throw new Error("网页只能挂断由本页面发起的呼叫");
   const callId = currentCall.id;
   await api(`/api/v1/calls/${encodeURIComponent(callId)}/hangup`, { method: "POST" });
   await closeBrowserAudio();
@@ -597,7 +582,6 @@ elements.connectButton.addEventListener("click", guard(connectGateway));
 elements.refreshButton.addEventListener("click", guard(refreshStatus));
 elements.refreshSmsButton.addEventListener("click", guard(refreshSms));
 elements.startCallButton.addEventListener("click", guard(beginOutboundCall));
-elements.answerButton.addEventListener("click", guard(answerIncomingCall));
 elements.hangupButton.addEventListener("click", guard(hangupCall));
 elements.diagnosticButton.addEventListener("click", guard(toggleAudioDiagnostic));
 elements.sendSmsButton.addEventListener("click", guard(sendSms));

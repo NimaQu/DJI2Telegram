@@ -21,7 +21,7 @@ auth_failure_window_seconds = 300
 auth_block_seconds = 900
 
 [calls]
-incoming_frontend = "telegram" # web, telegram, or auto
+incoming_frontend = "telegram" # telegram, auto, or web for an external API client
 
 [telegram]
 session = "data/telegram.session"

@@ -450,9 +450,10 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     assert "QDC507 控制台" in web_page
     assert "localStorage" in web_page
     assert 'href="/web/styles.css?v=0.4.0"' in web_page
-    assert 'src="/web/app.js?v=0.4.0"' in web_page
+    assert 'src="/web/app.js?v=0.4.1"' in web_page
     assert 'id="signalDbm"' in web_page
     assert 'id="signalBars"' in web_page
+    assert 'id="answerButton"' not in web_page
     web_script = client.get("/web/app.js").text
     assert 'TOKEN_STORAGE_KEY = "qdc507.gateway.bearer-token.v1"' in web_script
     assert "window.localStorage.setItem(TOKEN_STORAGE_KEY, value)" in web_script
@@ -472,6 +473,8 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     assert "renderSignal(module.connected ? module.signal : null)" in web_script
     assert 'Bot ${status.telegram_bot_state || "disabled"}' in web_script
     assert 'labels = ["未采样", "极弱", "较弱", "一般", "良好", "很强"]' in web_script
+    assert "answerIncomingCall" not in web_script
+    assert "/answer" not in web_script
     started = client.post(
         "/api/v1/calls/start",
         json={"number": "+1 204-555-0100"},
@@ -479,6 +482,15 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     )
     assert started.status_code == 200
     assert started.json()["cellular_number"] == "+12045550100"
+
+    # The built-in page has no incoming-call controls, but the authenticated
+    # control plane remains available to a future standalone application.
+    answered = client.post(
+        "/api/v1/calls/web-call/answer",
+        headers=headers,
+    )
+    assert answered.status_code == 200
+    assert answered.json()["state"] == "active"
 
     ticket_response = client.post(
         "/api/v1/calls/web-call/audio-ticket",

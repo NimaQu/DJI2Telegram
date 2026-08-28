@@ -74,7 +74,6 @@
         <input id="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="+12045550100">
         <div class="button-row">
           <button id="startCallButton">准备音频并拨号</button>
-          <button id="answerButton" class="success" disabled>接听来电</button>
           <button id="hangupButton" class="danger" disabled>挂断</button>
         </div>
         <div class="button-row compact">
@@ -82,7 +81,7 @@
           <button id="muteButton" class="secondary" disabled>麦克风静音</button>
           <button id="refreshButton" class="ghost">刷新状态</button>
         </div>
-        <p id="audioHint" class="hint">建议佩戴耳机，避免浏览器扬声器声音回灌到麦克风。“仅测试双向音频”不会执行 ATD/ATA；真实呼叫也只有在 WebSocket 和 ALSA 都就绪后才会拨号或允许接听。</p>
+        <p id="audioHint" class="hint">建议佩戴耳机，避免浏览器扬声器声音回灌到麦克风。“仅测试双向音频”不会执行 ATD；真实出站呼叫只有在 WebSocket 和 ALSA 都就绪后才会拨号。蜂窝来电由 Telegram 或独立 API 客户端处理，网页不提供接听功能。</p>
       </article>
 
       <article class="panel">
@@ -118,6 +117,6 @@
       <pre id="eventLog" aria-live="polite">等待连接…</pre>
     </section>
   </main>
-  <script type="module" src="/web/app.js?v=0.4.0"></script>
+  <script type="module" src="/web/app.js?v=0.4.1"></script>
 </body>
 </html>

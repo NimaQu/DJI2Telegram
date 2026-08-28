@@ -92,7 +92,7 @@ class Settings:
     telegram_allow_service_restart: bool = False
     module_voice_manifest: Path | None = None
     module_voice_resource_dir: Path | None = None
-    incoming_call_frontend: str = "web"
+    incoming_call_frontend: str = "telegram"
     log_level: str = "INFO"
     auth_max_failures: int = 10
     auth_failure_window_seconds: int = 300
@@ -190,7 +190,7 @@ class Settings:
             raise ConfigurationError("server.host must be a non-empty string")
         frontend = env.get(
             "QDC507_INCOMING_CALL_FRONTEND",
-            calls.get("incoming_frontend", "web"),
+            calls.get("incoming_frontend", "telegram"),
         )
         if not isinstance(frontend, str):
             raise ConfigurationError("calls.incoming_frontend must be a string")

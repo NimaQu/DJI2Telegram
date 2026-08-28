@@ -11,7 +11,7 @@ Kurigram User session 只负责私人语音呼叫。
 ## 功能
 
 - 收取、保存、转发和确认后发送 SMS；
-- 网页拨号、接听、挂断、音频诊断和双向通话；
+- 网页拨号、挂断出站通话、音频诊断和双向通话；
 - Telegram `/call`、`/sendsms`、来电提示和私人通话桥；
 - 模块手机号、运营商、无线制式、CSQ/dBm 信号状态；
 - 只读 USB descriptor probe、直接 libusb ADB 和受控 QADBKEY 授权；
@@ -81,7 +81,7 @@ auth_failure_window_seconds = 300
 auth_block_seconds = 900
 
 [calls]
-incoming_frontend = "telegram" # web, telegram, auto
+incoming_frontend = "telegram" # telegram, auto；web 仅供未来的独立 API 客户端
 
 [telegram]
 session = "data/telegram.session"
@@ -284,8 +284,8 @@ Bot 和 User 客户端相互独立：User session 缺失或启动失败时，Bot
 | GET | `/api/v1/sms` | 短信列表 |
 | POST | `/api/v1/sms/send` | 发送短信 |
 | GET | `/api/v1/calls/current` | 当前通话 |
-| POST | `/api/v1/calls/start` | 网页出站呼叫 |
-| POST | `/api/v1/calls/{id}/answer` | 接听网页来电 |
+| POST | `/api/v1/calls/start` | 网页或独立客户端发起出站呼叫 |
+| POST | `/api/v1/calls/{id}/answer` | 独立 API 客户端接听蜂窝来电 |
 | POST | `/api/v1/calls/{id}/hangup` | 挂断 |
 | GET | `/api/v1/events` | SSE 事件流 |
 | POST | `/api/v1/audio/diagnostic/start` | 不拨号的双向音频诊断 |
@@ -293,6 +293,11 @@ Bot 和 User 客户端相互独立：User session 缺失或启动失败时，Bot
 
 音频 WebSocket 使用 20 ms、320-byte little-endian PCM16 帧。Bearer Token 不进入 URL 或 Cookie；
 音频连接先用 Bearer Token 换取 30 秒、绑定会话 ID 的一次性票据。
+
+内置网页不显示接听按钮，也不会为蜂窝来电连接音频或调用 `answer`。未来开发独立 App 时，可将
+`calls.incoming_frontend` 设为 `web`，通过 SSE 或 `/api/v1/calls/current` 获取来电，申请
+`audio-ticket` 并建立音频 WebSocket，确认音频就绪后再调用 `/api/v1/calls/{id}/answer`。通话控制
+保持 RESTful；实时 PCM 不适合通过普通 REST 传输，因此继续使用带一次性票据的 WebSocket。
 
 认证失败按来源 IP 在内存中统计。默认 5 分钟内 10 次失败后封禁 15 分钟，响应为 HTTP 429 并带
 `Retry-After`；服务重启会清空封禁。只有请求直接来自 loopback 反向代理时才信任合法的

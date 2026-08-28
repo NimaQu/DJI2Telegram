@@ -74,6 +74,7 @@ def test_environment_can_override_toml_during_debugging(tmp_path):
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
     assert settings.telegram_user_id == 789
+    assert settings.incoming_call_frontend == "telegram"
 
 
 def test_legacy_multiple_user_telegram_configuration_is_rejected(tmp_path):
