@@ -1,0 +1,25 @@
+[Unit]
+Description=QDC507 Gateway
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/qdc507-gateway
+ExecStartPre=/usr/local/bin/uv run --frozen python gateway.py config-check
+ExecStart=/usr/local/bin/uv run --frozen python gateway.py serve
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=90
+TimeoutStopSec=15
+SuccessExitStatus=143
+Environment=PYTHONUNBUFFERED=1
+Environment=UV_NO_PROGRESS=1
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

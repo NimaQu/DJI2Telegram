@@ -1,0 +1,41 @@
+# Copy this file to config.toml and edit it in the project directory.
+
+[app]
+data_dir = "data"
+lock_path = "data/device.lock"
+
+[server]
+host = "127.0.0.1"
+port = 8787
+
+[logging]
+# INFO records lifecycle/call/module events in journald. Use DEBUG temporarily
+# when collecting a diagnostic log, then return to INFO.
+level = "INFO"
+
+[security]
+# Failed Bearer authentication attempts are counted per source address in
+# memory. The triggering request receives HTTP 429 with Retry-After.
+auth_max_failures = 10
+auth_failure_window_seconds = 300
+auth_block_seconds = 900
+
+[calls]
+incoming_frontend = "telegram" # web, telegram, or auto
+
+[telegram]
+session = "data/telegram.session"
+bot_session = "data/telegram-bot.session"
+# api_id = 123456
+# api_hash = "replace-me"
+# user_id = 123456789
+# bot_token = "123456789:replace-me"
+# Allows the single authorized Bot user to run /restart. This requires the
+# gateway process to run as root under qdc507-gateway.service.
+allow_service_restart = false
+
+[module]
+# The first audio session validates kernel 3.18.44, hashes, module-side ALSA
+# endpoints and VoLTE ACDB before enabling this call-scoped route.
+voice_manifest = "resources/module-voice/manifest.json"
+voice_resource_dir = "resources/module-voice"

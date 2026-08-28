@@ -1,0 +1,19 @@
+{
+  "vendor_id": "0x2C7C",
+  "product_id": "0x0125",
+  "bus": 1,
+  "address": 8,
+  "port_path": [2, 4],
+  "interfaces": [
+    {"number": 2, "class": 255, "subclass": 255, "protocol": 255,
+      "endpoints": [
+        {"address": "0x84", "direction": "in", "transfer_type": "bulk", "max_packet_size": 512},
+        {"address": "0x03", "direction": "out", "transfer_type": "bulk", "max_packet_size": 512}
+      ]
+    },
+    {"number": 6, "class": 1, "subclass": 1, "protocol": 0, "endpoints": []},
+    {"number": 7, "class": 1, "subclass": 2, "protocol": 0, "endpoints": []},
+    {"number": 8, "class": 1, "subclass": 2, "protocol": 0, "endpoints": []},
+    {"number": 9, "class": 1, "subclass": 2, "protocol": 0, "endpoints": []}
+  ]
+}

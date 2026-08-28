@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>QDC507 网关控制台</title>
+  <link rel="stylesheet" href="/web/styles.css?v=0.4.0">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">LINUX HEADLESS GATEWAY</p>
+        <h1>QDC507 控制台</h1>
+        <p class="subtitle">直接验证蜂窝短信、呼叫控制与双向 UAC 音频，不经过 Telegram。</p>
+      </div>
+      <div id="connectionBadge" class="badge neutral">未连接 API</div>
+    </header>
+
+    <section class="panel auth-panel">
+      <div>
+        <label for="token">Bearer Token</label>
+        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="输入网关 Bearer Token">
+      </div>
+      <button id="connectButton" class="secondary">连接网关</button>
+      <p class="hint">验证成功后，Token 会保存在当前站点的 localStorage，并在下次打开时自动连接。清除该站点的浏览器数据即可移除。远程使用必须置于 HTTPS/WSS 反向代理或 Tailscale 后。</p>
+    </section>
+
+    <section class="status-grid">
+      <article class="metric">
+        <span>模块</span>
+        <strong id="moduleState">未知</strong>
+        <small id="moduleIdentity">—</small>
+      </article>
+      <article class="metric signal-metric">
+        <span>蜂窝信号</span>
+        <div class="signal-summary">
+          <strong id="signalDbm">— dBm</strong>
+          <em id="signalQuality">未采样</em>
+        </div>
+        <div id="signalBars" class="signal-bars" data-level="0" role="img" aria-label="蜂窝信号未知">
+          <i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <small id="signalMeta">AT+CSQ · —</small>
+      </article>
+      <article class="metric">
+        <span>当前呼叫</span>
+        <strong id="callState">空闲</strong>
+        <small id="callNumber">—</small>
+      </article>
+      <article class="metric">
+        <span>浏览器音频</span>
+        <strong id="audioState">未连接</strong>
+        <small>PCM16 · 8 kHz · mono · 20 ms</small>
+      </article>
+      <article class="metric">
+        <span>Telegram User / Bot</span>
+        <strong id="telegramState">未知</strong>
+        <small>User 负责通话，Bot 负责消息与命令</small>
+      </article>
+    </section>
+
+    <section class="work-grid">
+      <article class="panel">
+        <div class="panel-title">
+          <div>
+            <p class="eyebrow">CELLULAR CALL</p>
+            <h2>网页直连电话</h2>
+          </div>
+          <span id="callFrontend" class="chip">web</span>
+        </div>
+        <label for="phoneNumber">电话号码</label>
+        <input id="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="+12045550100">
+        <div class="button-row">
+          <button id="startCallButton">准备音频并拨号</button>
+          <button id="answerButton" class="success" disabled>接听来电</button>
+          <button id="hangupButton" class="danger" disabled>挂断</button>
+        </div>
+        <div class="button-row compact">
+          <button id="diagnosticButton" class="secondary">仅测试双向音频</button>
+          <button id="muteButton" class="secondary" disabled>麦克风静音</button>
+          <button id="refreshButton" class="ghost">刷新状态</button>
+        </div>
+        <p id="audioHint" class="hint">建议佩戴耳机，避免浏览器扬声器声音回灌到麦克风。“仅测试双向音频”不会执行 ATD/ATA；真实呼叫也只有在 WebSocket 和 ALSA 都就绪后才会拨号或允许接听。</p>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title">
+          <div>
+            <p class="eyebrow">SMS</p>
+            <h2>发送短信</h2>
+          </div>
+          <span id="smsLength" class="chip">0 字符</span>
+        </div>
+        <label for="smsNumber">收件号码</label>
+        <input id="smsNumber" type="tel" inputmode="tel" placeholder="+12045550100">
+        <label for="smsText">内容</label>
+        <textarea id="smsText" rows="6" maxlength="4096" placeholder="输入短信内容"></textarea>
+        <button id="sendSmsButton">确认并发送短信</button>
+        <p id="smsResult" class="hint" aria-live="polite">发送前会再次显示确认框。</p>
+        <div class="inbox-title">
+          <strong>最近短信</strong>
+          <button id="refreshSmsButton" class="ghost">刷新</button>
+        </div>
+        <div id="smsInbox" class="inbox"><p class="hint">连接后显示最近短信。</p></div>
+      </article>
+    </section>
+
+    <section class="panel diagnostics">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">LIVE EVENTS</p>
+          <h2>诊断事件</h2>
+        </div>
+        <button id="clearEventsButton" class="ghost">清空</button>
+      </div>
+      <pre id="eventLog" aria-live="polite">等待连接…</pre>
+    </section>
+  </main>
+  <script type="module" src="/web/app.js?v=0.4.0"></script>
+</body>
+</html>
