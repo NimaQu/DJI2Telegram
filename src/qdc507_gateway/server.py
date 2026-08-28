@@ -33,6 +33,21 @@ from qdc507_gateway.web.calls import (
 logger = logging.getLogger("qdc507_gateway.server")
 
 
+def configure_application_logging(level: str) -> None:
+    application_logger = logging.getLogger("qdc507_gateway")
+    application_logger.setLevel(level)
+    application_logger.propagate = False
+    if not any(getattr(handler, "_qdc507_handler", False) for handler in application_logger.handlers):
+        handler = logging.StreamHandler()
+        handler._qdc507_handler = True
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"
+        ))
+        application_logger.addHandler(handler)
+    for handler in application_logger.handlers:
+        handler.setLevel(level)
+
+
 def build_app(settings: Optional[Settings] = None):
     settings = settings or Settings()
     service_started_at = time.monotonic()
@@ -489,7 +504,7 @@ def run(settings: Settings) -> int:
         import uvicorn
     except ImportError as exc:
         raise SystemExit("uvicorn is required to run the daemon") from exc
-    logging.getLogger("qdc507_gateway").setLevel(settings.log_level)
+    configure_application_logging(settings.log_level)
     kwargs = {
         "host": settings.host,
         "port": settings.port,
