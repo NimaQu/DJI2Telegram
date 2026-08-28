@@ -167,6 +167,14 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
     from qdc507_gateway.modem.service import LiveModuleService
     from qdc507_gateway.module_setup import setup_module
 
+    if settings.module_voice_manifest is None:
+        raise SystemExit(
+            "module-setup requires module.voice_manifest in config.toml"
+        )
+    manifest = RuntimeManifest.load(settings.module_voice_manifest)
+    resource_dir = (
+        settings.module_voice_resource_dir or settings.module_voice_manifest.parent
+    )
     locator = LibUSBDeviceLocator()
     database = Database(":memory:")
     service = LiveModuleService(
@@ -175,18 +183,12 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
         lock_path=settings.lock_path,
         locator=locator,
     )
-    voice_controller = None
-    if settings.module_voice_manifest is not None:
-        manifest = RuntimeManifest.load(settings.module_voice_manifest)
-        resource_dir = (
-            settings.module_voice_resource_dir or settings.module_voice_manifest.parent
-        )
-        voice_controller = ModuleVoiceController(
-            service.open_adb_client,
-            manifest,
-            resource_dir,
-            exclusive_runner=service.run_exclusive,
-        )
+    voice_controller = ModuleVoiceController(
+        service.open_adb_client,
+        manifest,
+        resource_dir,
+        exclusive_runner=service.run_exclusive,
+    )
 
     def progress(message: str) -> None:
         print(f"module-setup: {message}", file=sys.stderr, flush=True)
