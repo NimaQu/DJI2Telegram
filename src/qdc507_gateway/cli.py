@@ -156,6 +156,61 @@ def _adb_authorize(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if result else 2
 
 
+def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
+    if not args.confirm:
+        raise SystemExit(
+            "module-setup changes persistent USBCFG and may restart the module; "
+            "pass --confirm"
+        )
+    from qdc507_gateway.adb.runtime import ModuleVoiceController, RuntimeManifest
+    from qdc507_gateway.events import EventBus
+    from qdc507_gateway.modem.service import LiveModuleService
+    from qdc507_gateway.module_setup import setup_module
+
+    locator = LibUSBDeviceLocator()
+    database = Database(":memory:")
+    service = LiveModuleService(
+        database,
+        EventBus(),
+        lock_path=settings.lock_path,
+        locator=locator,
+    )
+    voice_controller = None
+    if settings.module_voice_manifest is not None:
+        manifest = RuntimeManifest.load(settings.module_voice_manifest)
+        resource_dir = (
+            settings.module_voice_resource_dir or settings.module_voice_manifest.parent
+        )
+        voice_controller = ModuleVoiceController(
+            service.open_adb_client,
+            manifest,
+            resource_dir,
+            exclusive_runner=service.run_exclusive,
+        )
+
+    def progress(message: str) -> None:
+        print(f"module-setup: {message}", file=sys.stderr, flush=True)
+
+    async def run_setup() -> dict[str, object]:
+        return await setup_module(service, voice_controller, progress=progress)
+
+    try:
+        result = asyncio.run(run_setup())
+    except Exception as exc:
+        print(json.dumps({
+            "ready": False,
+            "error": type(exc).__name__,
+            "message": " ".join(str(exc).split())[-800:],
+        }, ensure_ascii=False, indent=2))
+        return 2
+    finally:
+        service.close()
+        locator.close()
+        database.close()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
     result = {
         "config": None if settings.config_path is None else str(settings.config_path),
@@ -236,6 +291,17 @@ def main(argv=None) -> int:
     )
     adb_authorize.add_argument("--confirm", action="store_true")
     adb_authorize.set_defaults(handler=_adb_authorize)
+
+    module_setup = subparsers.add_parser(
+        "module-setup",
+        help="apply complete USBCFG, authorize ADB, and test the voice runtime",
+    )
+    module_setup.add_argument(
+        "--confirm",
+        action="store_true",
+        help="confirm the persistent USBCFG change and one module restart",
+    )
+    module_setup.set_defaults(handler=_module_setup)
 
     config_check = subparsers.add_parser(
         "config-check",

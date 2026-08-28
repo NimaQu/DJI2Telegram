@@ -120,14 +120,34 @@ arecord -l
 Probe 必须看到 descriptor 匹配的 ADB `FF/42/01`、UAC 7/8/9 和音频 endpoint。它不会 claim、reset、
 写 AT 或改变模块设置。
 
-若新模块尚未完成 QADBKEY 授权，确保服务没有运行后显式执行：
+新模块的出厂 USBCFG 通常不包含本项目需要的完整 ADB + Audio 组合。确认 systemd 服务、宿主机
+`adb`、MaVo 和 DJOneHub 都没有占用模块后，执行一次初始化：
+
+```sh
+sudo systemctl stop qdc507-gateway
+cd /opt/qdc507-gateway
+sudo /usr/local/bin/uv run --frozen python gateway.py module-setup --confirm
+```
+
+`module-setup` 会先读取 USBCFG。如果不是完整目标，它只写入一次
+`2C7C:0125,diagnostic=1,nmea=1,at=1,modem=1,network=1,adb=1,audio=1`，再执行一次
+`CFUN=1,1` 并等待同一物理 USB 设备重枚举。随后它检测 ADB root；只有 ADB 尚不可用时才执行
+QADBKEY 授权，最后上传并自检 `[module]` 配置的 voice runtime。重复执行时，已经正确的 USBCFG
+不会再次写入或重启模块。
+
+这个初始化不会发送短信、拨号、配置 USB 网卡或通过模块联网。`network=1` 只是保持当前复合 USB
+descriptor 的完整目标；命令不会在宿主机上启用该网络接口。输出不会包含 QADBKEY challenge、
+response 或完整授权命令。成功后可重新启动服务：
+
+```sh
+sudo systemctl start qdc507-gateway
+```
+
+若只需要在 USBCFG 已正确的模块上重新执行 QADBKEY，仍可使用：
 
 ```sh
 sudo /usr/local/bin/uv run --frozen python gateway.py adb-authorize --confirm
 ```
-
-该命令不会打印 challenge response 或授权命令。不要让 MaVo、DJOneHub、宿主机 adb 或另一个网关
-进程同时占用模块。
 
 ## 4. Telegram 与 API Token
 
@@ -325,7 +345,7 @@ sudo journalctl -u qdc507-gateway.service -n 200 --no-pager
 
 1. USB 直通后 `lsusb` 与 descriptor probe；
 2. `uv sync --frozen`、复制 TOML、`config-check`；
-3. 必要时 QADBKEY 授权；
+3. 停止服务并执行一次 `module-setup --confirm`，完成 USBCFG、QADBKEY 和 voice runtime 自检；
 4. `telegram-login`、`telegram-compat`、创建 API Token；
 5. 前台启动并请求 `module?refresh=true`；
 6. 安装并启动 systemd，检查 journald；
