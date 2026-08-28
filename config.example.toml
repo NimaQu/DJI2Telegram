@@ -31,7 +31,7 @@ bot_session = "data/telegram-bot.session"
 # user_id = 123456789
 # bot_token = "123456789:replace-me"
 # Allows the single authorized Bot user to run /restart. This requires the
-# gateway process to run as root under qdc507-gateway.service.
+# gateway process to run as root under dji2telegram.service.
 allow_service_restart = false
 
 [module]

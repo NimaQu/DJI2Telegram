@@ -104,7 +104,7 @@ def test_telegram_status_is_human_readable_and_maintenance_commands_dispatch():
     async def run():
         actions = []
         status = {
-            "service": "qdc507-gateway",
+            "service": "DJI2Telegram",
             "version": "0.4.0",
             "uptime_seconds": 3720,
             "module_state": "connected",

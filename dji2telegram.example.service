@@ -1,5 +1,5 @@
 [Unit]
-Description=QDC507 Gateway
+Description=DJI2Telegram QDC507 Gateway
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=120
@@ -7,7 +7,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/qdc507-gateway
+WorkingDirectory=/root/DJI2Telegram
 ExecStartPre=/usr/local/bin/uv run --frozen python gateway.py config-check
 ExecStart=/usr/local/bin/uv run --frozen python gateway.py serve
 Restart=on-failure

@@ -1,6 +1,6 @@
-# QDC507 Linux Headless Gateway
+# DJI2Telegram
 
-QDC507 的 Linux headless 短信与语音网关。宿主机通过 libusb 管理 AT/ADB，通过 UAC/ALSA
+DJI2Telegram 是 QDC507 的 Linux headless 短信与语音网关。宿主机通过 libusb 管理 AT/ADB，通过 UAC/ALSA
 桥接 8 kHz PCM 音频；网页提供 REST、SSE 和双向音频 WebSocket，Telegram Bot 负责短信和命令，
 Kurigram User session 只负责私人语音呼叫。
 
@@ -23,8 +23,15 @@ Kurigram User session 只负责私人语音呼叫。
 
 ## 1. Debian 13 全新安装
 
-以下流程在 Debian 13 (trixie) VM 上使用 root service。先把整个 `2c7c:0125` USB 设备直通 VM；
+以下流程在 Debian 13 (trixie) VM 上使用 root service，项目默认放在 `/root/DJI2Telegram`。先把整个
+`2c7c:0125` USB 设备直通 VM；
 Proxmox 建议按稳定物理 USB port 绑定，避免设备重枚举后地址变化。
+
+先进入 root shell；后续所有项目命令都在这个 shell 中执行：
+
+```sh
+sudo -i
+```
 
 安装系统依赖：
 
@@ -48,20 +55,20 @@ curl -LsSf https://astral.sh/uv/install.sh \
 clone 并创建项目环境：
 
 ```sh
-sudo git clone <repository-url> /opt/qdc507-gateway
-cd /opt/qdc507-gateway
+sudo git clone https://github.com/NimaQu/DJI2Telegram.git /root/DJI2Telegram
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv sync --frozen
 sudo cp config.example.toml config.toml
 sudo mkdir -p -m 0700 data
 sudo chmod 0600 config.toml
 ```
 
-如果仓库尚未发布到远端，也可以把完整 Git 工作树复制到 `/opt/qdc507-gateway`；不要复制 `.venv`、
+如果仓库尚未发布到远端，也可以把完整 Git 工作树复制到 `/root/DJI2Telegram`；不要复制 `.venv`、
 `config.toml`、`data/` 或 session 文件。
 
 ## 2. 配置
 
-编辑 `/opt/qdc507-gateway/config.toml`：
+编辑 `/root/DJI2Telegram/config.toml`：
 
 ```toml
 [app]
@@ -103,7 +110,7 @@ voice_resource_dir = "resources/module-voice"
 检查配置不会输出 `api_hash`、`bot_token` 或任何 session 内容：
 
 ```sh
-cd /opt/qdc507-gateway
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py config-check
 ```
 
@@ -111,7 +118,7 @@ sudo /usr/local/bin/uv run --frozen python gateway.py config-check
 
 ```sh
 lsusb -d 2c7c:0125
-cd /opt/qdc507-gateway
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py probe --json
 aplay -l
 arecord -l
@@ -124,8 +131,8 @@ Probe 必须看到 descriptor 匹配的 ADB `FF/42/01`、UAC 7/8/9 和音频 end
 `adb`、MaVo 和 DJOneHub 都没有占用模块后，执行一次初始化：
 
 ```sh
-sudo systemctl stop qdc507-gateway
-cd /opt/qdc507-gateway
+sudo systemctl stop dji2telegram
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py module-setup --confirm
 ```
 
@@ -140,7 +147,7 @@ descriptor 的完整目标；命令不会在宿主机上启用该网络接口。
 response 或完整授权命令。成功后可重新启动服务：
 
 ```sh
-sudo systemctl start qdc507-gateway
+sudo systemctl start dji2telegram
 ```
 
 若只需要在 USBCFG 已正确的模块上重新执行 QADBKEY，仍可使用：
@@ -154,7 +161,7 @@ sudo /usr/local/bin/uv run --frozen python gateway.py adb-authorize --confirm
 创建 Kurigram User session：
 
 ```sh
-cd /opt/qdc507-gateway
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py telegram-login
 ```
 
@@ -185,7 +192,7 @@ sudo /usr/local/bin/uv run --frozen python gateway.py token-delete
 先前台运行以发现配置或硬件问题：
 
 ```sh
-cd /opt/qdc507-gateway
+cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py serve
 ```
 
@@ -208,28 +215,28 @@ curl -H 'Authorization: Bearer <token>' \
 
 ## 6. systemd
 
-仓库根目录只有一个部署模板 `qdc507-gateway.example.service`。默认路径已经是
-`/opt/qdc507-gateway`，uv 路径已经是 `/usr/local/bin/uv`；使用其他路径时先修改这两项。
+仓库根目录只有一个部署模板 `dji2telegram.example.service`。默认路径已经是
+`/root/DJI2Telegram`，uv 路径已经是 `/usr/local/bin/uv`；使用其他路径时先修改这两项。
 
 ```sh
-cd /opt/qdc507-gateway
-sudo cp qdc507-gateway.example.service /etc/systemd/system/qdc507-gateway.service
+cd /root/DJI2Telegram
+sudo cp dji2telegram.example.service /etc/systemd/system/dji2telegram.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now qdc507-gateway.service
-sudo systemctl --no-pager --full status qdc507-gateway.service
-sudo journalctl -u qdc507-gateway.service -n 100 --no-pager
+sudo systemctl enable --now dji2telegram.service
+sudo systemctl --no-pager --full status dji2telegram.service
+sudo journalctl -u dji2telegram.service -n 100 --no-pager
 ```
 
 示例没有 `User=`，因此以 root 运行。`UMask=0077` 保护 SQLite 和 Telegram session；每次启动前
 自动执行 `config-check`。升级后使用：
 
 ```sh
-cd /opt/qdc507-gateway
-sudo systemctl stop qdc507-gateway.service
+cd /root/DJI2Telegram
+sudo systemctl stop dji2telegram.service
 sudo git pull --ff-only
 sudo /usr/local/bin/uv sync --frozen
 sudo /usr/local/bin/uv run --frozen python gateway.py config-check
-sudo systemctl start qdc507-gateway.service
+sudo systemctl start dji2telegram.service
 ```
 
 ## 7. Tailscale HTTPS 与监听地址
@@ -310,7 +317,7 @@ Bot 即可，不需要手动输入 `/usercode` 或 `/userpassword`。Bot 会尽�
 正常运行使用 `INFO`：
 
 ```sh
-sudo journalctl -u qdc507-gateway.service -f -o short-iso
+sudo journalctl -u dji2telegram.service -f -o short-iso
 ```
 
 需要收集详细日志时把 `config.toml` 改为：
@@ -323,9 +330,9 @@ level = "DEBUG"
 然后：
 
 ```sh
-sudo systemctl restart qdc507-gateway.service
-sudo journalctl -u qdc507-gateway.service --since "10 minutes ago" \
-  -o short-iso --no-pager > qdc507-debug.log
+sudo systemctl restart dji2telegram.service
+sudo journalctl -u dji2telegram.service --since "10 minutes ago" \
+  -o short-iso --no-pager > dji2telegram-debug.log
 ```
 
 日志和 SQLite 事件不会记录 API Token、Bot Token、QADBKEY 密码、challenge response 或完整授权
@@ -334,10 +341,10 @@ sudo journalctl -u qdc507-gateway.service --since "10 minutes ago" \
 常见检查：
 
 ```sh
-systemctl is-active qdc507-gateway.service
+systemctl is-active dji2telegram.service
 lsusb -d 2c7c:0125
 curl -fsS http://127.0.0.1:8787/openapi.json | grep '"version"'
-sudo journalctl -u qdc507-gateway.service -n 200 --no-pager
+sudo journalctl -u dji2telegram.service -n 200 --no-pager
 ```
 
 - `phone_number = null`：SIM/运营商没有通过 CNUM 写入自号码，不代表注册失败；

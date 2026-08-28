@@ -211,7 +211,7 @@ def _serve(_args: argparse.Namespace, settings: Settings) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="qdc507-gateway")
+    parser = argparse.ArgumentParser(prog="dji2telegram")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     serve = subparsers.add_parser("serve", help="run the gateway web/API service")
@@ -265,6 +265,16 @@ def main(argv=None) -> int:
     config_check.set_defaults(handler=_config_check)
 
     args = parser.parse_args(argv)
+    # Reject unconfirmed destructive commands before reading project config.
+    # This keeps the safety barrier effective even in a fresh clone where
+    # config.toml has not been created yet.
+    if args.subcommand == "adb-authorize" and not args.confirm:
+        raise SystemExit("adb-authorize requires --confirm")
+    if args.subcommand == "module-setup" and not args.confirm:
+        raise SystemExit(
+            "module-setup changes persistent USBCFG and may restart the module; "
+            "pass --confirm"
+        )
     settings = Settings.load(PROJECT_CONFIG_FILE)
     return args.handler(args, settings)
 

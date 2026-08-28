@@ -147,7 +147,7 @@ def format_human_status(status: Any) -> str:
     audio_text = "已连接" if audio.get("mode") else "未连接"
     return (
         "[网关状态]\n"
-        f"服务: {status.get('service', 'qdc507-gateway')} {status.get('version', '')}\n"
+        f"服务: {status.get('service', 'DJI2Telegram')} {status.get('version', '')}\n"
         f"运行时间: {uptime_text}\n"
         f"模块: {state_label(status.get('module_state'))}\n"
         f"本机号码: {phone_number}\n"

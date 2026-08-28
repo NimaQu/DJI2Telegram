@@ -1,7 +1,7 @@
 [project]
-name = "qdc507-gateway"
+name = "DJI2Telegram"
 version = "0.4.0"
-description = "Headless Linux QDC507 Telegram gateway"
+description = "Headless Linux QDC507 gateway for Telegram and web clients"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115",
@@ -26,8 +26,8 @@ dev = [
 ]
 
 [project.scripts]
-qdc507-gateway = "qdc507_gateway.cli:main"
-qdc507-gateway-server = "qdc507_gateway.server:main"
+dji2telegram = "qdc507_gateway.cli:main"
+dji2telegram-server = "qdc507_gateway.server:main"
 
 [build-system]
 requires = ["hatchling"]

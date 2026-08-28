@@ -446,7 +446,7 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     assert web_response.headers["cache-control"] == "no-store, no-cache, must-revalidate"
     assert web_response.headers["pragma"] == "no-cache"
     web_page = web_response.text
-    assert "QDC507 控制台" in web_page
+    assert "DJI2Telegram" in web_page
     assert "localStorage" in web_page
     assert 'href="/web/styles.css?v=0.4.0"' in web_page
     assert 'src="/web/app.js?v=0.4.1"' in web_page

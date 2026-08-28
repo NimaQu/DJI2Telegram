@@ -65,7 +65,7 @@ def build_app(settings: Optional[Settings] = None):
     locator = LibUSBDeviceLocator()
     state = {
         "status": {
-            "service": "qdc507-gateway",
+            "service": "DJI2Telegram",
             "version": __version__,
             "module_state": "disconnected",
         },
@@ -260,7 +260,7 @@ def build_app(settings: Optional[Settings] = None):
                     "systemctl",
                     "--no-block",
                     "restart",
-                    "qdc507-gateway.service",
+                    "dji2telegram.service",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -521,7 +521,7 @@ def run(settings: Settings) -> int:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(prog="qdc507-gateway-server")
+    parser = argparse.ArgumentParser(prog="dji2telegram-server")
     parser.parse_args(argv)
     return run(Settings.load(PROJECT_CONFIG_FILE))
 

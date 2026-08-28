@@ -32,7 +32,7 @@ async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
     iterator = events.subscribe()
     pending: asyncio.Task | None = None
     try:
-        yield ": qdc507-gateway stream connected\n\n"
+        yield ": DJI2Telegram stream connected\n\n"
         while True:
             if pending is None:
                 pending = asyncio.create_task(anext(iterator))
@@ -65,7 +65,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
     except ImportError as exc:
         raise RuntimeError("FastAPI is required to create the REST application") from exc
 
-    app = FastAPI(title="QDC507 Gateway", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="DJI2Telegram", version=__version__, lifespan=lifespan)
     state = state if state is not None else {}
     auth_limiter = state.get("auth_limiter")
     if not isinstance(auth_limiter, AuthFailureLimiter):
@@ -144,7 +144,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
     @app.get("/api/v1/status")
     async def status(_: str = Depends(require_token)):
         current = state.get("get_status", state.get("status", {
-            "service": "qdc507-gateway", "module_state": "disconnected",
+            "service": "DJI2Telegram", "module_state": "disconnected",
         }))
         if callable(current):
             current = current()
