@@ -217,6 +217,17 @@ sudo /usr/local/bin/uv run --frozen python gateway.py telegram-login
 Bot 使用 `bot_token` 自动登录，不需要交互 session。启动后先由唯一用户向 Bot 发送 `/start`，这样
 Bot 才能主动发送短信和来电通知。
 
+> [!IMPORTANT]
+> **新建或重新登录 User session 后，必须先建立一次 User peer。** 等日志出现
+> `telegram.connected` 后，用配置中 `telegram.user_id` 对应的个人账号，给“网关 User 账号”发送一条
+> 新的普通私聊消息。这里不是给 Bot 发消息；Bot session 与 User session 的 peer 缓存完全独立。
+
+Kurigram 通过数字 `user_id` 发起私人通话时还需要该用户的 `access_hash`。全新 session 即使登录成功，
+也可能尚未缓存个人账号的完整 peer；这时 `/call` 会立即失败，日志显示
+`telegram.call.failed ... PeerIdInvalid`，模块不会开始蜂窝拨号。发送上述私聊消息后通常无需重启即可
+重试。如果仍然失败，用网关 User 账号的官方 Telegram 客户端添加个人账号为联系人、互相发送一条
+消息，然后重启 `dji2telegram.service`。每次删除 session 或在全新 VM 重新登录后都应重复此步骤。
+
 创建 API Token：
 
 ```sh
@@ -397,6 +408,8 @@ sudo journalctl -u dji2telegram.service -n 200 --no-pager
 - 有网页上行样本但对端听不到：检查模块 voice runtime、UAC playback 与天线/VoLTE；
 - 下行 `nonzero_samples = 0`：模块没有输出蜂窝音频，先检查通话是否真正 active；
 - User `login_required`、Bot `connected`：用 Bot 在线重登或 SSH 执行 `telegram-login`；
+- `telegram.call.failed ... PeerIdInvalid`：新 User session 尚未认识个人账号；由个人账号给网关 User
+  账号发送一条新的普通私聊消息，注意不是发送给 Bot；
 - HTTP 429：等待 `Retry-After`，或确认没有旧 Token 的客户端持续重试。
 
 ## 11. 删除 VM 前的全新部署验收
@@ -407,7 +420,8 @@ sudo journalctl -u dji2telegram.service -n 200 --no-pager
 2. `uv sync --frozen`、复制 TOML、`config-check`；
 3. 停止服务并执行一次 `module-setup --confirm`，完成 USBCFG、QADBKEY 和 voice runtime 自检；
 4. `telegram-login`、创建 API Token；
-5. 前台启动并请求 `module?refresh=true`；
+5. 前台启动并请求 `module?refresh=true`；确认 `telegram.connected` 后，由个人账号给网关 User 账号
+   发送一条新私聊消息以建立 peer；
 6. 安装并启动 systemd，检查 journald；
 7. 配置 Tailscale Serve，从 HTTPS 网页连接；
 8. 先做音频诊断，再分别测试网页和 Telegram 通话；
