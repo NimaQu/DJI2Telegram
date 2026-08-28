@@ -65,13 +65,11 @@ Proxmox VM 的 USB passthrough；这时才是直通问题。
 - 按来源地址统计认证失败并临时封禁；
 - systemd/journald 运行和可配置日志等级。
 
-明确不做：使用 QDC507 内置网卡联网、自动修改 USBCFG/CFUN、未经确认发送短信或发起蜂窝电话。
-
 ## 1. Debian 13 全新安装
 
 以下流程在 Debian 13 (trixie) VM 上使用 root service，项目默认放在 `/root/DJI2Telegram`。先把整个
 `2c7c:0125` USB 设备直通 VM；
-Proxmox 建议按稳定物理 USB port 绑定，避免设备重枚举后地址变化。
+Proxmox 建议按物理 USB port 绑定，避免设备重枚举后地址变化。
 
 先进入 root shell；后续所有项目命令都在这个 shell 中执行：
 
@@ -108,9 +106,6 @@ sudo cp config.example.toml config.toml
 sudo mkdir -p -m 0700 data
 sudo chmod 0600 config.toml
 ```
-
-如果仓库尚未发布到远端，也可以把完整 Git 工作树复制到 `/root/DJI2Telegram`；不要复制 `.venv`、
-`config.toml`、`data/` 或 session 文件。
 
 ## 2. 配置
 
@@ -411,24 +406,6 @@ sudo journalctl -u dji2telegram.service -n 200 --no-pager
 - `telegram.call.failed ... PeerIdInvalid`：新 User session 尚未认识个人账号；由个人账号给网关 User
   账号发送一条新的普通私聊消息，注意不是发送给 Bot；
 - HTTP 429：等待 `Retry-After`，或确认没有旧 Token 的客户端持续重试。
-
-## 11. 删除 VM 前的全新部署验收
-
-建议按以下顺序在新 VM 完整走一遍：
-
-1. USB 直通后 `lsusb` 与 descriptor probe；
-2. `uv sync --frozen`、复制 TOML、`config-check`；
-3. 停止服务并执行一次 `module-setup --confirm`，完成 USBCFG、QADBKEY 和 voice runtime 自检；
-4. `telegram-login`、创建 API Token；
-5. 前台启动并请求 `module?refresh=true`；确认 `telegram.connected` 后，由个人账号给网关 User 账号
-   发送一条新私聊消息以建立 peer；
-6. 安装并启动 systemd，检查 journald；
-7. 配置 Tailscale Serve，从 HTTPS 网页连接；
-8. 先做音频诊断，再分别测试网页和 Telegram 通话；
-9. 测试 SMS 接收、Bot 草稿修改/取消，最后才显式确认发送；
-10. 临时移走 User session，确认 Bot 仍在线并可执行 `/status` 和重登流程；
-11. 用错误 Token 验证 401/429，再用正确 Token 验证封禁到期后的恢复；
-12. 将日志等级恢复为 `INFO`。
 
 默认 pytest 完全离线，不连接模块、不发送短信、不拨号、不写 USBCFG、不重启设备：
 
