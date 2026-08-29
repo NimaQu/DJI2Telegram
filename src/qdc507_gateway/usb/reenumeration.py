@@ -18,14 +18,27 @@ class ReenumerationCoordinator:
         self.event_waiter = event_waiter
         self.in_progress = False
 
-    def wait_for_device(self, previous: USBDeviceSnapshot, timeout: float = 20.0) -> USBDeviceSnapshot:
+    def wait_for_device(self, previous: USBDeviceSnapshot, timeout: float = 30.0) -> USBDeviceSnapshot:
         self.in_progress = True
         try:
             deadline = time.monotonic() + timeout
+            disconnected = False
             while time.monotonic() < deadline:
-                for candidate in self.locator.find(previous.vendor_id, previous.product_id):
-                    if previous.same_physical_device(candidate):
-                        return candidate
+                candidates = self.locator.find(previous.vendor_id, previous.product_id)
+                same_device = next(
+                    (
+                        candidate for candidate in candidates
+                        if previous.same_physical_device(candidate)
+                    ),
+                    None,
+                )
+                if same_device is None:
+                    # A persistent AT command can return before the modem has
+                    # physically removed its old USB device. Do not accept the
+                    # still-present device as the post-reset connection.
+                    disconnected = True
+                elif disconnected:
+                    return same_device
                 if self.event_waiter is not None:
                     try:
                         self.event_waiter(min(0.2, max(0.0, deadline - time.monotonic())))

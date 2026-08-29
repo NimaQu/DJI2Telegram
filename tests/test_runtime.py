@@ -75,6 +75,27 @@ def test_reenumeration_can_use_udev_event_waiter():
     assert waits
 
 
+def test_reenumeration_waits_for_disconnect_before_accepting_same_device():
+    from qdc507_gateway.usb.reenumeration import ReenumerationCoordinator
+
+    previous = USBDeviceSnapshot(0x2C7C, 0x0125, port_path=(1, 1))
+    rebound = USBDeviceSnapshot(0x2C7C, 0x0125, port_path=(1, 1), address=7)
+
+    class Locator:
+        def __init__(self):
+            self.states = iter(((previous,), (), (rebound,)))
+
+        def find(self, *_args):
+            return next(self.states)
+
+    coordinator = ReenumerationCoordinator(
+        Locator(),
+        sleep=lambda _seconds: None,
+    )
+    result = coordinator.wait_for_device(previous, timeout=1.0)
+    assert result is rebound
+
+
 def test_udev_monitor_filters_to_qdc507_without_opening_usb():
     from qdc507_gateway.usb.udev import PyUdevUSBMonitor
 
