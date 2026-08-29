@@ -68,11 +68,15 @@ def test_kurigram_service_starts_routes_and_forwards_sms(tmp_path):
             hangup=lambda call_id: None,
             client_factory=client_factory,
             bridge_factory=lambda _: Bridge(),
+            send_at=lambda command: {"command": command, "ok": True, "terminal": "OK"},
+            restart_module=lambda: {"operation": "cfun", "reenumerated": True},
         )
         assert await service.start()
         assert service.state == "connected"
         assert service.bot_state == "connected"
         assert service.command_router.allowed_ids == (42,)
+        assert service.command_router.send_at is not None
+        assert service.command_router.restart_module is not None
         await service.forward_sms({"id": "sms-1", "sender": "+1", "body": "hello"})
         assert sent == [("bot", 42, "[接收短信]\n发件人: +1\n内容: hello")]
         await service.notify_incoming_cellular_call("+12045550100")

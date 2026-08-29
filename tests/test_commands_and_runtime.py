@@ -20,6 +20,8 @@ def test_telegram_command_parser_and_authorization():
     command = parse_command('/call "+1 204-555-0100"')
     assert command.name == "call"
     assert validate_call_number(command.args[0]) == "+12045550100"
+    assert parse_command("/sendat").name == "sendat"
+    assert parse_command("/rebootmodule").name == "restartmodule"
     authorize_sender(42, (42,))
     try:
         authorize_sender(7, (42,))
@@ -96,6 +98,83 @@ def test_telegram_sms_draft_can_be_cancelled_without_sending():
         )
         assert cancelled.text == "[已取消发送短信]\n收件人: 10010\n内容: 查询余额"
         assert actions == []
+
+    asyncio.run(run())
+
+
+def test_telegram_sendat_requires_confirmation_and_returns_modem_result():
+    async def run():
+        actions = []
+        router = TelegramCommandRouter(
+            42,
+            lambda: {},
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: None,
+            send_at=lambda command: actions.append(command) or {
+                "lines": ["+CSQ: 17,99"],
+                "urcs": [],
+                "terminal": "OK",
+                "ok": True,
+            },
+        )
+
+        prompt = await router.dispatch(42, "/sendat")
+        assert "请直接回复要发送的 AT 命令" in prompt.text
+        preview = await router.dispatch(42, " AT+CSQ ")
+        assert preview.text == (
+            "[AT 命令确认]\n命令: AT+CSQ\n\n"
+            "点击下方按钮执行或取消；如需修改，请直接回复新的 AT 命令。"
+        )
+        assert actions == []
+        assert router.is_sensitive_input("AT+CSQ")
+
+        result = await router.dispatch_callback(
+            42,
+            preview.buttons[0][0].callback_data,
+        )
+        assert "[AT 命令结果]" in result.text
+        assert "状态: 成功" in result.text
+        assert "+CSQ: 17,99" in result.text
+        assert actions == ["AT+CSQ"]
+
+    asyncio.run(run())
+
+
+def test_telegram_module_restart_requires_confirmation():
+    async def run():
+        actions = []
+        router = TelegramCommandRouter(
+            42,
+            lambda: {},
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: None,
+            restart_module=lambda: actions.append("restart") or {
+                "operation": "cfun",
+                "changed": True,
+                "reenumerated": True,
+            },
+        )
+
+        preview = await router.dispatch(42, "/restartmodule")
+        assert "AT+CFUN=1,1" in preview.text
+        assert actions == []
+        cancelled = await router.dispatch_callback(
+            42,
+            preview.buttons[0][1].callback_data,
+        )
+        assert cancelled.text == "[已取消重启模块]\n命令: AT+CFUN=1,1"
+        assert actions == []
+
+        preview = await router.dispatch(42, "/rebootmodule")
+        result = await router.dispatch_callback(
+            42,
+            preview.buttons[0][0].callback_data,
+        )
+        assert "[模块重启结果]" in result.text
+        assert "reenumerated: True" in result.text
+        assert actions == ["restart"]
 
     asyncio.run(run())
 

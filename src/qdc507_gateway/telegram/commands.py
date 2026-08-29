@@ -38,6 +38,15 @@ class SMSDraft:
 
 
 @dataclass
+class ATDraft:
+    command: str
+    expires_at: float
+    action: str = "send"
+    token: Optional[str] = None
+    executing: bool = False
+
+
+@dataclass
 class UserLoginConversation:
     stage: str
     expires_at: float
@@ -60,6 +69,7 @@ def parse_command(text: str) -> TelegramCommand:
         "/help": "help",
         "/call": "call",
         "/sendsms": "sendsms",
+        "/sendat": "sendat",
         "/confirm": "confirm",
         "/cancel": "cancel",
         "/status": "status",
@@ -68,6 +78,11 @@ def parse_command(text: str) -> TelegramCommand:
         "/usercode": "usercode",
         "/userpassword": "userpassword",
         "/restart": "restart",
+        "/restartmodule": "restartmodule",
+        "/rebootmodule": "restartmodule",
+        "/restart_module": "restartmodule",
+        "/restartmodem": "restartmodule",
+        "/modulerestart": "restartmodule",
     }
     if name not in aliases:
         raise CommandError("unsupported gateway command")
@@ -95,6 +110,61 @@ def validate_call_number(value: str) -> str:
     if len(normalized.lstrip("+")) > 20:
         raise CommandError("call number is too long")
     return normalized
+
+
+def validate_at_command(value: str) -> str:
+    if not isinstance(value, str):
+        raise CommandError("AT 命令必须是文本")
+    command = value.strip()
+    if not command:
+        raise CommandError("AT 命令不能为空")
+    if len(command) > 1024:
+        raise CommandError("AT 命令不能超过 1024 个字符")
+    if any(ord(character) < 0x20 for character in command):
+        raise CommandError("AT 命令不能包含控制字符")
+    try:
+        command.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise CommandError("AT 命令必须使用 ASCII 字符") from exc
+    return command
+
+
+def format_at_result(command: str, result: Any, title: str = "[AT 命令结果]") -> str:
+    """Render a modem result without allowing a long response to exceed Telegram's limit."""
+    parts = [title, f"命令: {command}"]
+    if isinstance(result, dict):
+        ok = result.get("ok")
+        terminal = result.get("terminal")
+        successful = ok if isinstance(ok, bool) else (
+            terminal == "OK" or (terminal is None and "error" not in result)
+        )
+        parts.append(f"状态: {'成功' if successful else '失败'}")
+        if terminal is not None:
+            parts.append(f"终止: {terminal}")
+        lines = result.get("lines")
+        if isinstance(lines, (list, tuple)) and lines:
+            parts.append("返回:\n" + "\n".join(str(line) for line in lines))
+        urcs = result.get("urcs")
+        if isinstance(urcs, (list, tuple)) and urcs:
+            parts.append("异步通知:\n" + "\n".join(str(line) for line in urcs))
+        details = []
+        for key, value in result.items():
+            if key in {"ok", "terminal", "lines", "urcs"}:
+                continue
+            details.append(f"{key}: {value}")
+        if details:
+            parts.append("附加信息:\n" + "\n".join(details))
+    else:
+        parts.append("状态: 完成")
+        if result is not None:
+            parts.append(f"返回:\n{result}")
+
+    rendered = "\n".join(parts)
+    limit = 4096
+    if len(rendered) <= limit:
+        return rendered
+    suffix = "\n…（结果已截断）"
+    return rendered[: limit - len(suffix)] + suffix
 
 
 def format_human_status(status: Any) -> str:
@@ -164,10 +234,16 @@ def format_human_status(status: Any) -> str:
 
 
 class TelegramCommandRouter:
-    """Single-user commands plus an explicit, confirm-before-send SMS draft."""
+    """Single-user commands plus confirm-before-send SMS and AT drafts."""
 
     SMS_CALLBACK_PATTERN = re.compile(
         r"^qdc507\.sms\.(send|cancel)\.([A-Za-z0-9_-]{16,32})$"
+    )
+    AT_CALLBACK_PATTERN = re.compile(
+        r"^qdc507\.at\.(send|cancel)\.([A-Za-z0-9_-]{16,32})$"
+    )
+    MODULE_RESTART_CALLBACK_PATTERN = re.compile(
+        r"^qdc507\.module\.(restart|cancel)\.([A-Za-z0-9_-]{16,32})$"
     )
 
     def __init__(
@@ -186,6 +262,8 @@ class TelegramCommandRouter:
         cancel_user_login: Optional[Callable[[], Any]] = None,
         user_login_state: Optional[Callable[[], Any]] = None,
         restart_service: Optional[Callable[[], Any]] = None,
+        send_at: Optional[Callable[[str], Any]] = None,
+        restart_module: Optional[Callable[[], Any]] = None,
     ):
         if sms_draft_ttl_seconds <= 0:
             raise ValueError("SMS draft lifetime must be positive")
@@ -203,11 +281,15 @@ class TelegramCommandRouter:
         self.cancel_user_login = cancel_user_login
         self.user_login_state = user_login_state
         self.restart_service = restart_service
+        self.send_at = send_at
+        self.restart_module = restart_module
         self.sms_draft_ttl_seconds = sms_draft_ttl_seconds
         self.user_login_ttl_seconds = user_login_ttl_seconds
         self._sms_draft: Optional[SMSDraft] = None
+        self._at_draft: Optional[ATDraft] = None
         self._user_login: Optional[UserLoginConversation] = None
         self._sms_lock = asyncio.Lock()
+        self._at_lock = asyncio.Lock()
         self._user_login_lock = asyncio.Lock()
 
     def is_sensitive_input(self, text: str) -> bool:
@@ -215,7 +297,7 @@ class TelegramCommandRouter:
         command = stripped.lower().split(" ", 1)[0].split("@", 1)[0]
         if command in {"/userlogin", "/usercode", "/userpassword"}:
             return True
-        return bool(stripped and self._user_login is not None)
+        return bool(stripped and (self._user_login is not None or self._at_draft is not None))
 
     async def dispatch(self, sender_id: int, text: str) -> Optional[TelegramResponse]:
         authorize_sender(sender_id, self.allowed_ids)
@@ -225,6 +307,8 @@ class TelegramCommandRouter:
         if not stripped.startswith("/"):
             if self._user_login is not None:
                 return await self._advance_user_login(text)
+            if self._at_draft is not None:
+                return await self._update_at_draft(text)
             return await self._update_sms_draft(text)
 
         command = parse_command(text)
@@ -236,12 +320,17 @@ class TelegramCommandRouter:
                 "/status 查看状态\n"
                 "/call <号码> 拨打电话\n"
                 "/sendsms <号码> 创建短信草稿\n"
-                "/hangup 挂断当前通话"
+                "/hangup 挂断当前通话\n"
+                "/cancel 取消当前草稿或流程"
             )
+            if self.send_at is not None:
+                text += "\n/sendat 发送任意 AT 命令（需确认）"
             if self.begin_user_login is not None:
                 text += "\n/userlogin 交互式重新登录 Telegram User"
             if self.restart_service is not None:
                 text += "\n/restart 重启网关服务"
+            if self.restart_module is not None:
+                text += "\n/restartmodule 重启 QDC507 模块（需确认）"
             return TelegramResponse(text)
         if command.name == "status":
             if command.args:
@@ -262,16 +351,28 @@ class TelegramCommandRouter:
                 raise CommandError("用法: /sendsms <电话号码>")
             if self._user_login is not None:
                 raise CommandError("请先完成 User 登录，或使用 /cancel 取消")
+            if self._has_active_at_draft():
+                raise CommandError("请先完成 AT 命令，或使用 /cancel 取消")
             return await self._begin_sms_draft(validate_call_number(command.args[0]))
+        if command.name == "sendat":
+            if self.send_at is None:
+                raise CommandError("Bot AT 命令功能未启用")
+            if command.args:
+                raise CommandError("用法: /sendat，然后直接回复 AT 命令")
+            return await self._begin_at_draft()
         if command.name == "confirm":
             if command.args:
                 raise CommandError("/confirm 不接受参数")
+            if self._at_draft is not None:
+                return await self._confirm_at(None)
             return await self._confirm_sms(None)
         if command.name == "cancel":
             if command.args:
                 raise CommandError("/cancel 不接受参数")
             if self._user_login is not None:
                 return await self._cancel_user_login()
+            if self._at_draft is not None:
+                return await self._cancel_at(None)
             return await self._cancel_sms(None)
         if command.name == "hangup":
             if len(command.args) > 1:
@@ -315,9 +416,17 @@ class TelegramCommandRouter:
                 raise CommandError("/restart 不接受参数")
             detail = await self._maintenance_call(self.restart_service)
             return TelegramResponse(f"[重启服务]\n{detail}")
+        if command.name == "restartmodule":
+            if self.restart_module is None:
+                raise CommandError("Bot 模块重启功能未启用")
+            if command.args:
+                raise CommandError("/restartmodule 不接受参数")
+            return await self._begin_module_restart()
         raise CommandError("unsupported gateway command")
 
     async def _begin_user_login(self, phone: Optional[str]) -> TelegramResponse:
+        if self._has_active_at_draft():
+            raise CommandError("请先完成 AT 命令，或使用 /cancel 取消")
         async with self._sms_lock:
             draft = self._sms_draft
             if draft is not None and draft.expires_at > time.monotonic():
@@ -411,12 +520,160 @@ class TelegramCommandRouter:
     ) -> Optional[TelegramResponse]:
         authorize_sender(sender_id, self.allowed_ids)
         match = self.SMS_CALLBACK_PATTERN.fullmatch(callback_data or "")
-        if match is None:
-            return None
-        action, token = match.groups()
-        if action == "send":
-            return await self._confirm_sms(token)
-        return await self._cancel_sms(token)
+        if match is not None:
+            action, token = match.groups()
+            if action == "send":
+                return await self._confirm_sms(token)
+            return await self._cancel_sms(token)
+        match = self.AT_CALLBACK_PATTERN.fullmatch(callback_data or "")
+        if match is not None:
+            action, token = match.groups()
+            if action == "send":
+                return await self._confirm_at(token)
+            return await self._cancel_at(token)
+        match = self.MODULE_RESTART_CALLBACK_PATTERN.fullmatch(callback_data or "")
+        if match is not None:
+            action, token = match.groups()
+            if action == "restart":
+                return await self._confirm_at(token)
+            return await self._cancel_at(token)
+        return None
+
+    def _has_active_at_draft(self) -> bool:
+        draft = self._at_draft
+        if draft is None:
+            return False
+        if draft.expires_at <= time.monotonic():
+            self._at_draft = None
+            return False
+        return True
+
+    async def _begin_at_draft(self) -> TelegramResponse:
+        if self._user_login is not None:
+            raise CommandError("请先完成 User 登录，或使用 /cancel 取消")
+        async with self._sms_lock:
+            if self._sms_draft is not None:
+                if self._sms_draft.expires_at <= time.monotonic():
+                    self._sms_draft = None
+                else:
+                    raise CommandError("请先完成短信草稿，或使用 /cancel 取消")
+        async with self._at_lock:
+            if self._at_draft is not None and self._at_draft.executing:
+                raise CommandError("AT 命令正在执行，请稍后再试")
+            self._at_draft = ATDraft(
+                command="",
+                expires_at=time.monotonic() + self.sms_draft_ttl_seconds,
+            )
+        return TelegramResponse(
+            "[发送 AT 命令]\n"
+            "请直接回复要发送的 AT 命令，例如 AT+CSQ。\n"
+            "使用 /cancel 可取消。"
+        )
+
+    async def _begin_module_restart(self) -> TelegramResponse:
+        if self._user_login is not None:
+            raise CommandError("请先完成 User 登录，或使用 /cancel 取消")
+        if self._has_active_at_draft():
+            raise CommandError("请先完成 AT 命令，或使用 /cancel 取消")
+        async with self._sms_lock:
+            if self._sms_draft is not None:
+                if self._sms_draft.expires_at <= time.monotonic():
+                    self._sms_draft = None
+                else:
+                    raise CommandError("请先完成短信草稿，或使用 /cancel 取消")
+        token = secrets.token_urlsafe(12)
+        async with self._at_lock:
+            self._at_draft = ATDraft(
+                command="AT+CFUN=1,1",
+                action="restart",
+                token=token,
+                expires_at=time.monotonic() + self.sms_draft_ttl_seconds,
+            )
+        return TelegramResponse(
+            "[重启模块确认]\n"
+            "命令: AT+CFUN=1,1\n"
+            "模块将重启并短暂断开 USB/网络连接。\n\n"
+            "点击下方按钮确认执行或取消。",
+            ((
+                TelegramButton("确认重启", f"qdc507.module.restart.{token}"),
+                TelegramButton("取消", f"qdc507.module.cancel.{token}"),
+            ),),
+        )
+
+    async def _update_at_draft(self, text: str) -> TelegramResponse:
+        command = validate_at_command(text)
+        async with self._at_lock:
+            draft = self._require_at_draft()
+            if draft.action != "send":
+                raise CommandError("当前正在等待模块重启确认，请点击按钮或使用 /cancel")
+            if draft.executing:
+                raise CommandError("AT 命令正在执行")
+            draft.command = command
+            draft.token = secrets.token_urlsafe(12)
+            draft.expires_at = time.monotonic() + self.sms_draft_ttl_seconds
+            token = draft.token
+        return TelegramResponse(
+            f"[AT 命令确认]\n命令: {command}\n\n"
+            "点击下方按钮执行或取消；如需修改，请直接回复新的 AT 命令。",
+            ((
+                TelegramButton("执行", f"qdc507.at.send.{token}"),
+                TelegramButton("取消", f"qdc507.at.cancel.{token}"),
+            ),),
+        )
+
+    async def _confirm_at(self, token: Optional[str]) -> TelegramResponse:
+        async with self._at_lock:
+            draft = self._require_at_draft(token)
+            if draft.executing:
+                raise CommandError("操作正在执行，请勿重复确认")
+            if not draft.command:
+                raise CommandError("AT 命令为空，请先回复要执行的命令")
+            draft.executing = True
+            command = draft.command
+            action = draft.action
+        try:
+            if action == "restart":
+                assert self.restart_module is not None
+                result = await self._maintenance_call(self.restart_module)
+                response = TelegramResponse(
+                    format_at_result(command, result, title="[模块重启结果]")
+                )
+            else:
+                assert self.send_at is not None
+                result = await self._maintenance_call(self.send_at, command)
+                response = TelegramResponse(format_at_result(command, result))
+        except Exception:
+            async with self._at_lock:
+                if self._at_draft is draft:
+                    draft.executing = False
+            raise
+        async with self._at_lock:
+            if self._at_draft is draft:
+                self._at_draft = None
+        return response
+
+    async def _cancel_at(self, token: Optional[str]) -> TelegramResponse:
+        async with self._at_lock:
+            draft = self._require_at_draft(token)
+            if draft.executing:
+                raise CommandError("操作正在执行，无法取消")
+            self._at_draft = None
+        if draft.action == "restart":
+            return TelegramResponse("[已取消重启模块]\n命令: AT+CFUN=1,1")
+        return TelegramResponse(
+            f"[已取消 AT 命令]\n命令: {draft.command or '未输入'}"
+        )
+
+    def _require_at_draft(self, token: Optional[str] = None) -> ATDraft:
+        draft = self._at_draft
+        if draft is None:
+            raise CommandError("没有待处理的 AT 命令，请先使用 /sendat")
+        if draft.expires_at < time.monotonic():
+            self._at_draft = None
+            raise CommandError("AT 命令草稿已过期，请重新使用 /sendat")
+        if token is not None and draft.token != token:
+            raise CommandError("此确认消息已失效，请使用最新按钮")
+        return draft
 
     async def _confirm_sms(self, token: Optional[str]) -> TelegramResponse:
         async with self._sms_lock:

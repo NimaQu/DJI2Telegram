@@ -330,9 +330,11 @@ HTTP、SSE 和 WebSocket。不要使用 `tailscale funnel`，除非明确希望�
 - `/status`：人类可读的模块、手机号、运营商、信号、Telegram、通话和音频状态；
 - `/call <号码>`：先接通 Telegram，再由模块拨号；
 - `/sendsms <号码>`：创建草稿，回复内容后通过“发送/取消”按钮确认；
+- `/sendat`：回复任意 ASCII AT 命令，先通过“执行/取消”按钮确认，再返回模块结果；
+- `/restartmodule`（别名 `/rebootmodule`）：通过按钮确认后发送 `AT+CFUN=1,1` 重启 QDC507 模块；
 - `/hangup`：挂断当前通话；
 - `/userlogin`：交互式恢复 User session；Bot 会依次询问手机号、验证码，并仅在需要时询问两步验证密码；
-- `/cancel`：取消当前短信草稿或 User 登录流程；
+- `/cancel`：取消当前短信草稿、AT 命令或 User 登录流程；
 - `/restart`：仅当 `telegram.allow_service_restart = true` 时通过 systemd 重启服务。
 
 Bot 和 User 客户端相互独立：User session 缺失或启动失败时，Bot 仍会在线并显示“需要登录”。在线

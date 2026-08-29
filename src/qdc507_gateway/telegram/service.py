@@ -63,6 +63,8 @@ class KurigramTelegramService:
         telegram_call_failed: Optional[Callable[[Any, Exception], Awaitable[Any]]] = None,
         telegram_call_disconnected: Optional[Callable[[Any], Awaitable[Any]]] = None,
         restart_service: Optional[Callable[[], Any]] = None,
+        send_at: Optional[Callable[[str], Any]] = None,
+        restart_module: Optional[Callable[[], Any]] = None,
         user_login_allowed: Optional[Callable[[], Any]] = None,
     ):
         self.session_path = Path(session_path)
@@ -82,6 +84,8 @@ class KurigramTelegramService:
         self.telegram_call_failed = telegram_call_failed
         self.telegram_call_disconnected = telegram_call_disconnected
         self.restart_service_callback = restart_service
+        self.send_at_callback = send_at
+        self.restart_module_callback = restart_module
         self.user_login_allowed = user_login_allowed
         self.client: Any = None
         self.bot_client: Any = None
@@ -492,6 +496,8 @@ class KurigramTelegramService:
                 cancel_user_login=self.cancel_user_login,
                 user_login_state=lambda: self.state,
                 restart_service=self.restart_service_callback,
+                send_at=self.send_at_callback,
+                restart_module=self.restart_module_callback,
             )
             self.message_client = KurigramMessageClient(self.bot_client)
             self.message_client.install_command_router(self.command_router)

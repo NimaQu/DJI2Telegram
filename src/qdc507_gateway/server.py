@@ -283,6 +283,21 @@ def build_app(settings: Optional[Settings] = None):
         task.add_done_callback(maintenance_tasks.discard)
         return "已安排 systemd 重启，Bot 预计数秒后恢复连接。"
 
+    async def restart_module():
+        current_call = await call_coordinator.current()
+        if current_call is not None or web_audio_diagnostic.active:
+            raise RuntimeError("通话或音频诊断期间不能重启模块")
+        await events.publish(GatewayEvent("module.restart_requested", {
+            "command": "AT+CFUN=1,1",
+            "source": "telegram_bot",
+        }))
+        result = await module_service.at("AT+CFUN=1,1", timeout_ms=10000)
+        await events.publish(GatewayEvent("module.restart_completed", {
+            "command": "AT+CFUN=1,1",
+            "reenumerated": result.get("reenumerated") if isinstance(result, dict) else None,
+        }))
+        return result
+
     telegram_service = KurigramTelegramService(
         session_path=settings.telegram_session,
         bot_session_path=settings.telegram_bot_session,
@@ -303,6 +318,8 @@ def build_app(settings: Optional[Settings] = None):
             if settings.telegram_allow_service_restart
             else None
         ),
+        send_at=module_service.at,
+        restart_module=restart_module,
         user_login_allowed=user_login_allowed,
     )
     module_service.sms_forwarder = telegram_service.forward_sms
