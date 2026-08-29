@@ -16,6 +16,7 @@ data_dir = "state"
 lock_path = "state/device.lock"
 
 [server]
+enabled = false
 host = "192.168.88.245"
 port = 8787
 
@@ -49,6 +50,7 @@ auth_block_seconds = 600
     assert settings.telegram_session == (tmp_path / "state/gateway.session").resolve()
     assert settings.telegram_bot_session == (tmp_path / "state/bot.session").resolve()
     assert settings.telegram_bot_token == "123:do-not-print"
+    assert settings.web_enabled is False
     assert settings.host == "192.168.88.245"
     assert settings.port == 8787
     assert settings.telegram_user_id == 456
@@ -62,17 +64,22 @@ auth_block_seconds = 600
 
 def test_environment_can_override_toml_during_debugging(tmp_path):
     config = tmp_path / "config.toml"
-    config.write_text("[server]\nhost='127.0.0.1'\nport=8787\n", encoding="utf-8")
+    config.write_text(
+        "[server]\nenabled=false\nhost='127.0.0.1'\nport=8787\n",
+        encoding="utf-8",
+    )
     settings = Settings.load(
         config,
         environ={
             "QDC507_HOST": "0.0.0.0",
             "QDC507_PORT": "9000",
+            "QDC507_SERVER_ENABLED": "true",
             "QDC507_TELEGRAM_USER_ID": "789",
         },
     )
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
+    assert settings.web_enabled is True
     assert settings.telegram_user_id == 789
     assert settings.incoming_call_frontend == "telegram"
 
@@ -84,6 +91,16 @@ def test_legacy_multiple_user_telegram_configuration_is_rejected(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ConfigurationError, match="telegram.user_id"):
+        Settings.load(config, environ={})
+
+
+def test_disabled_server_rejects_web_only_incoming_call_frontend(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "[server]\nenabled=false\n[calls]\nincoming_frontend='web'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match="server.enabled"):
         Settings.load(config, environ={})
 
 
@@ -152,3 +169,4 @@ user_id = 456
     assert "also-do-not-print-this" not in output
     assert json.loads(output)["telegram"]["configured"] is True
     assert json.loads(output)["telegram"]["bot_configured"] is True
+    assert json.loads(output)["server"]["enabled"] is True

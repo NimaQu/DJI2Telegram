@@ -145,6 +145,7 @@ def format_human_status(status: Any) -> str:
             call.get("frontend", "unknown"),
         )
     audio_text = "已连接" if audio.get("mode") else "未连接"
+    web_text = "已启用" if status.get("web_enabled", True) else "已关闭"
     return (
         "[网关状态]\n"
         f"服务: {status.get('service', 'DJI2Telegram')} {status.get('version', '')}\n"
@@ -155,6 +156,7 @@ def format_human_status(status: Any) -> str:
         f"信号: {signal_text}\n"
         f"Telegram User: {state_label(status.get('telegram_state'))}\n"
         f"Telegram Bot: {state_label(status.get('telegram_bot_state'))}\n"
+        f"Web/API: {web_text}\n"
         f"当前通话: {call_text}\n"
         f"音频: {audio_text}\n"
         f"来电入口: {status.get('incoming_call_frontend', 'unknown')}"

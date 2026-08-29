@@ -177,6 +177,7 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
         "database": str(settings.database_path),
         "lock_path": str(settings.lock_path),
         "server": {
+            "enabled": settings.web_enabled,
             "host": settings.host,
             "port": settings.port,
         },
@@ -214,7 +215,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="dji2telegram")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
-    serve = subparsers.add_parser("serve", help="run the gateway web/API service")
+    serve = subparsers.add_parser("serve", help="run the gateway service (HTTP optional)")
     serve.set_defaults(handler=_serve)
 
     probe = subparsers.add_parser("probe", help="descriptor-only USB probe")

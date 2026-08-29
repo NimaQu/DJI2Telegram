@@ -117,6 +117,7 @@ data_dir = "data"
 lock_path = "data/device.lock"
 
 [server]
+enabled = true
 host = "127.0.0.1"
 port = 8787
 
@@ -231,7 +232,19 @@ sudo /usr/local/bin/uv run --frozen python gateway.py token
 
 明文 Token 只显示这一次，SQLite 只保存一个 scrypt hash。再次执行 `token` 会立即替换旧 Token，
 旧值不能再用于新的 REST、SSE 或音频票据请求。网页会把 Token 保存在当前站点的 `localStorage`。
-如果只使用 Telegram、不需要 Web/API，可以删除 Token：
+如果只使用 Telegram、不需要 Web/API，可以彻底关闭 HTTP 监听：
+
+```toml
+[server]
+enabled = false
+```
+
+重启服务后，模块、短信、电话和 Telegram 仍会运行，但不会监听 `server.host/server.port`，网页控制台、
+REST、SSE、WebSocket 和 OpenAPI 都无法访问。关闭时 `calls.incoming_frontend` 不能设为 `web`；使用
+`telegram` 或 `auto`。重新设为 `true` 并重启即可恢复，已有 API Token 会保留。也可以用环境变量
+`QDC507_SERVER_ENABLED=false` 临时覆盖。
+
+仅删除 Token 不会关闭 HTTP 监听，但会撤销所有 Bearer API 访问：
 
 ```sh
 sudo /usr/local/bin/uv run --frozen python gateway.py token-delete

@@ -115,6 +115,7 @@ def test_telegram_status_is_human_readable_and_maintenance_commands_dispatch():
             },
             "telegram_state": "login_required",
             "telegram_bot_state": "connected",
+            "web_enabled": False,
             "current_call": None,
             "audio": {},
             "incoming_call_frontend": "telegram",
@@ -136,6 +137,7 @@ def test_telegram_status_is_human_readable_and_maintenance_commands_dispatch():
         assert "信号: -79 dBm · 5/5" in rendered
         assert "Telegram User: 需要登录" in rendered
         assert "Telegram Bot: 已连接" in rendered
+        assert "Web/API: 已关闭" in rendered
         assert "{" not in rendered
 
         assert "code sent" in (await router.dispatch(42, "/userlogin +14312764514")).text

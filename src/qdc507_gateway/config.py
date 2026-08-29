@@ -81,6 +81,7 @@ def _positive_int(value: Any, field: str) -> int:
 class Settings:
     data_dir: Path = Path("/var/lib/qdc507-gateway")
     lock_path: Path = Path("/run/qdc507-gateway/device.lock")
+    web_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8787
     telegram_session: Path = Path("/var/lib/qdc507-gateway/telegram.session")
@@ -102,6 +103,10 @@ class Settings:
     def __post_init__(self) -> None:
         if self.incoming_call_frontend not in {"web", "telegram", "auto"}:
             raise ConfigurationError("calls.incoming_frontend must be web, telegram, or auto")
+        if not self.web_enabled and self.incoming_call_frontend == "web":
+            raise ConfigurationError(
+                "calls.incoming_frontend cannot be web when server.enabled is false"
+            )
         if not 1 <= self.port <= 65535:
             raise ConfigurationError("server.port must be between 1 and 65535")
         if self.log_level not in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}:
@@ -206,6 +211,10 @@ class Settings:
         return cls(
             data_dir=data_dir,
             lock_path=lock_path,
+            web_enabled=_boolean(
+                env.get("QDC507_SERVER_ENABLED", server.get("enabled", True)),
+                "server.enabled",
+            ),
             host=host.strip(),
             port=port,
             telegram_session=session,

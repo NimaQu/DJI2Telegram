@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import signal
 import time
 from contextlib import asynccontextmanager
 from typing import Optional, Sequence
@@ -68,6 +69,7 @@ def build_app(settings: Optional[Settings] = None):
             "service": "DJI2Telegram",
             "version": __version__,
             "module_state": "disconnected",
+            "web_enabled": settings.web_enabled,
         },
         "module": {"connected": False, "identity": None},
         "auth_limiter": AuthFailureLimiter(
@@ -124,12 +126,15 @@ def build_app(settings: Optional[Settings] = None):
             }))
         frontend = settings.incoming_call_frontend
         if frontend == "auto":
-            frontend = (
-                "telegram"
-                if telegram_service.state == "connected"
-                and telegram_service.call_bridge is not None
-                else "web"
-            )
+            if not settings.web_enabled:
+                frontend = "telegram"
+            else:
+                frontend = (
+                    "telegram"
+                    if telegram_service.state == "connected"
+                    and telegram_service.call_bridge is not None
+                    else "web"
+                )
         if frontend == "telegram":
             return await call_orchestrator.start_inbound(number)
         return await web_call_controller.start_inbound(number)
@@ -499,12 +504,37 @@ def build_app(settings: Optional[Settings] = None):
     return app
 
 
+async def run_headless(app, stop_event: asyncio.Event | None = None) -> None:
+    """Run the gateway lifespan without creating an HTTP listening socket."""
+    loop = asyncio.get_running_loop()
+    stop = stop_event or asyncio.Event()
+    installed_signals = []
+    if stop_event is None:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(signum, stop.set)
+                installed_signals.append(signum)
+            except (NotImplementedError, RuntimeError):
+                pass
+    try:
+        async with app.router.lifespan_context(app):
+            await stop.wait()
+    finally:
+        for signum in installed_signals:
+            loop.remove_signal_handler(signum)
+
+
 def run(settings: Settings) -> int:
+    configure_application_logging(settings.log_level)
+    app = build_app(settings)
+    if not settings.web_enabled:
+        logger.info("Web console and API disabled; no HTTP socket will be opened")
+        asyncio.run(run_headless(app))
+        return 0
     try:
         import uvicorn
     except ImportError as exc:
         raise SystemExit("uvicorn is required to run the daemon") from exc
-    configure_application_logging(settings.log_level)
     kwargs = {
         "host": settings.host,
         "port": settings.port,
@@ -514,7 +544,7 @@ def run(settings: Settings) -> int:
         # an open browser tab.
         "timeout_graceful_shutdown": 10,
     }
-    uvicorn.run(build_app(settings), **kwargs)
+    uvicorn.run(app, **kwargs)
     return 0
 
 

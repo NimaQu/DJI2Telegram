@@ -5,6 +5,9 @@ data_dir = "data"
 lock_path = "data/device.lock"
 
 [server]
+# false keeps the Telegram/module gateway running without opening any HTTP,
+# REST, SSE, WebSocket, OpenAPI, or static web-console listening socket.
+enabled = true
 host = "127.0.0.1"
 port = 8787
 
