@@ -197,15 +197,56 @@ class KurigramMessageClient:
             data = getattr(query, "data", None)
             if sender is None or not isinstance(data, str):
                 return
+            restart_callback_detector = getattr(router, "is_module_restart_callback", None)
+            is_module_restart = (
+                callable(restart_callback_detector)
+                and bool(restart_callback_detector(data))
+            )
+            message = getattr(query, "message", None)
+            editor = None if message is None else getattr(message, "edit_text", None)
+
+            async def mark_module_restart(command: str) -> None:
+                if not callable(editor):
+                    return
+                try:
+                    await editor(
+                        f"[模块重启]\n命令: {command}\n正在重启模块，请稍候。",
+                        reply_markup=None,
+                    )
+                except Exception:
+                    # The command must still run if the callback message is
+                    # already gone or Telegram rejects the edit.
+                    pass
+
             try:
-                result = await router.dispatch_callback(int(sender), data)
+                if is_module_restart:
+                    result = await router.dispatch_callback(
+                        int(sender),
+                        data,
+                        before_module_restart=mark_module_restart,
+                    )
+                else:
+                    result = await router.dispatch_callback(int(sender), data)
             except PermissionError:
                 await query.answer("无权执行此操作", show_alert=True)
                 return
             except CommandError as exc:
+                if is_module_restart:
+                    try:
+                        await self.client.send_message(router.user_id, f"[模块重启失败]\n{exc}")
+                    except Exception:
+                        pass
                 await query.answer(str(exc), show_alert=True)
                 return
             except Exception as exc:
+                if is_module_restart:
+                    try:
+                        await self.client.send_message(
+                            router.user_id,
+                            f"[模块重启失败]\n操作失败，请查看网关日志 ({type(exc).__name__})",
+                        )
+                    except Exception:
+                        pass
                 await query.answer(
                     f"操作失败，请查看网关日志 ({type(exc).__name__})",
                     show_alert=True,
@@ -213,9 +254,9 @@ class KurigramMessageClient:
                 return
             if result is None:
                 return
-            message = getattr(query, "message", None)
-            editor = None if message is None else getattr(message, "edit_text", None)
-            if callable(editor):
+            if is_module_restart:
+                await self.client.send_message(router.user_id, result.text)
+            elif callable(editor):
                 await editor(result.text, reply_markup=reply_markup(result))
             else:
                 await self.client.send_message(router.user_id, result.text)

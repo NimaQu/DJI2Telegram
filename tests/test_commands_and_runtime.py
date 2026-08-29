@@ -172,11 +172,43 @@ def test_telegram_module_restart_requires_confirmation():
             42,
             preview.buttons[0][0].callback_data,
         )
-        assert "[模块重启结果]" in result.text
+        assert "[模块重启成功]" in result.text
         assert "reenumerated: True" in result.text
         assert actions == ["restart"]
 
     asyncio.run(run())
+
+
+def test_telegram_module_restart_runs_after_pre_execution_message_update():
+    events = []
+
+    async def restart_module():
+        events.append("restart")
+        return {"status": "ok"}
+
+    async def before_restart(command):
+        events.append(("edit", command))
+
+    async def run():
+        router = TelegramCommandRouter(
+            42,
+            lambda: {},
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: None,
+            restart_module=restart_module,
+        )
+        preview = await router.dispatch(42, "/restartmodule")
+        result = await router.dispatch_callback(
+            42,
+            preview.buttons[0][0].callback_data,
+            before_module_restart=before_restart,
+        )
+
+        assert result is not None
+
+    asyncio.run(run())
+    assert events == [("edit", "AT+CFUN=1,1"), "restart"]
 
 
 def test_telegram_status_is_human_readable_and_maintenance_commands_dispatch():

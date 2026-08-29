@@ -513,10 +513,17 @@ class TelegramCommandRouter:
                 detail = str(await self._maintenance_call(self.cancel_user_login))
             return TelegramResponse(f"[Telegram User 登录]\n{detail}")
 
+    def is_module_restart_callback(self, callback_data: str) -> bool:
+        """Return whether callback_data is the confirmed module restart action."""
+        match = self.MODULE_RESTART_CALLBACK_PATTERN.fullmatch(callback_data or "")
+        return match is not None and match.group(1) == "restart"
+
     async def dispatch_callback(
         self,
         sender_id: int,
         callback_data: str,
+        *,
+        before_module_restart: Optional[Callable[[str], Any]] = None,
     ) -> Optional[TelegramResponse]:
         authorize_sender(sender_id, self.allowed_ids)
         match = self.SMS_CALLBACK_PATTERN.fullmatch(callback_data or "")
@@ -535,7 +542,7 @@ class TelegramCommandRouter:
         if match is not None:
             action, token = match.groups()
             if action == "restart":
-                return await self._confirm_at(token)
+                return await self._confirm_at(token, before_module_restart=before_module_restart)
             return await self._cancel_at(token)
         return None
 
@@ -621,7 +628,12 @@ class TelegramCommandRouter:
             ),),
         )
 
-    async def _confirm_at(self, token: Optional[str]) -> TelegramResponse:
+    async def _confirm_at(
+        self,
+        token: Optional[str],
+        *,
+        before_module_restart: Optional[Callable[[str], Any]] = None,
+    ) -> TelegramResponse:
         async with self._at_lock:
             draft = self._require_at_draft(token)
             if draft.executing:
@@ -634,9 +646,16 @@ class TelegramCommandRouter:
         try:
             if action == "restart":
                 assert self.restart_module is not None
+                if before_module_restart is not None:
+                    # This is only a UI update. Do not prevent the requested
+                    # restart if Telegram cannot edit the original message.
+                    try:
+                        await self._call(before_module_restart, command)
+                    except Exception:
+                        pass
                 result = await self._maintenance_call(self.restart_module)
                 response = TelegramResponse(
-                    format_at_result(command, result, title="[模块重启结果]")
+                    format_at_result(command, result, title="[模块重启成功]")
                 )
             else:
                 assert self.send_at is not None
