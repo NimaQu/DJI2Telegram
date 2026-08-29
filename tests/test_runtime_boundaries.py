@@ -22,6 +22,19 @@ def test_at_response_keeps_qcfg_and_routes_known_urc():
     assert writes == [b'AT+QCFG="usbnet"\r']
 
 
+def test_at_response_routes_direct_sms_header_and_pdu_as_one_urc_sequence():
+    writes = []
+    pdu = "00040D91683108108300F0000862805221436500046D4B8BD5"
+    chunks = iter([(f"+CMT: ,23\r\n{pdu}\r\nOK\r\n").encode("ascii")])
+    session = ATSession(writes.append, lambda _: next(chunks, b""))
+
+    response = session.command("AT+CSQ")
+
+    assert response.lines == ()
+    assert session.drain_urcs() == ["+CMT: ,23", pdu]
+    assert session.urcs == []
+
+
 def test_at_sms_pdu_waits_for_prompt_then_final_ok():
     writes = []
     chunks = iter([b"\r\n> ", b"\r\n+CMGS: 1\r\nOK\r\n"])

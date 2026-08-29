@@ -325,6 +325,35 @@ def test_monitor_accepts_direct_cmt_pdu_without_sms_storage_index():
     asyncio.run(run())
 
 
+def test_monitor_drains_direct_sms_queued_during_an_at_command():
+    async def run():
+        database = Database(":memory:")
+        service = LiveModuleService(database, EventBus())
+        stop = asyncio.Event()
+        pdu = "00040D91683108108300F0000862805221436500046D4B8BD5"
+
+        class QueuedDirectCMT:
+            @staticmethod
+            def drain_urcs():
+                stop.set()
+                return ["+CMT: ,23", pdu]
+
+            @staticmethod
+            def read(_timeout):
+                raise AssertionError("queued URCs must be handled before another USB read")
+
+            @staticmethod
+            def feed(_data):
+                return []
+
+        await service._read_monitor(QueuedDirectCMT(), stop)
+        rows = database.list_sms()
+        assert len(rows) == 1
+        assert rows[0]["body"] == "测试"
+
+    asyncio.run(run())
+
+
 def test_monitor_accepts_standard_ring_for_crc_zero_modules():
     async def run():
         service = LiveModuleService(Database(":memory:"), EventBus())
@@ -402,6 +431,32 @@ def test_monitor_enables_clip_as_volatile_connection_initialization():
 
     assert LiveModuleService._enable_caller_id(AT())
     assert commands == [("AT+CLIP=1", 2.0)]
+
+
+def test_monitor_configures_pdu_sms_for_direct_delivery_without_module_storage():
+    commands = []
+
+    class AT:
+        @staticmethod
+        def command(command, timeout):
+            commands.append((command, timeout))
+            return ATResponse((), "OK")
+
+    LiveModuleService._configure_direct_sms(AT())
+    assert commands == [
+        ("AT+CMGF=0", 2.0),
+        ("AT+CNMI=2,2,0,0,0", 2.0),
+    ]
+
+
+def test_monitor_rejects_connection_when_direct_sms_configuration_fails():
+    class AT:
+        @staticmethod
+        def command(_command, _timeout):
+            return ATResponse((), "ERROR")
+
+    with pytest.raises(ModuleServiceError, match="rejected direct SMS"):
+        LiveModuleService._configure_direct_sms(AT())
 
 
 def test_monitor_persists_cellular_disconnect_reason_before_cleanup():

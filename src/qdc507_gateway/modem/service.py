@@ -653,6 +653,7 @@ class LiveModuleService:
             disconnect_callback = None
             try:
                 session, at = await asyncio.to_thread(self._open_monitor_session)
+                await asyncio.to_thread(self._configure_direct_sms, at)
                 caller_id_enabled = await asyncio.to_thread(self._enable_caller_id, at)
                 async with self._monitor_lock:
                     self._monitor_session = session
@@ -713,6 +714,22 @@ class LiveModuleService:
             raise
 
     @staticmethod
+    def _configure_direct_sms(at: Any) -> None:
+        """Deliver SMS PDUs to this process without consuming modem storage."""
+        command = getattr(at, "command", None)
+        if not callable(command):
+            raise ModuleServiceError("AT transport cannot configure direct SMS delivery")
+        for value in ("AT+CMGF=0", "AT+CNMI=2,2,0,0,0"):
+            try:
+                response = command(value, 2.0)
+            except Exception as exc:
+                raise ModuleServiceError(
+                    "modem direct SMS delivery configuration failed"
+                ) from exc
+            if not response.ok:
+                raise ModuleServiceError("modem rejected direct SMS delivery configuration")
+
+    @staticmethod
     def _enable_caller_id(at: Any) -> bool:
         command = getattr(at, "command", None)
         if not callable(command):
@@ -736,8 +753,13 @@ class LiveModuleService:
         while not stop.is_set():
             try:
                 async with self._monitor_lock:
-                    chunk = await asyncio.to_thread(at.read, 0.5)
-                    lines = at.feed(chunk)
+                    drain_urcs = getattr(at, "drain_urcs", None)
+                    queued_lines = drain_urcs() if callable(drain_urcs) else []
+                    if queued_lines:
+                        lines = queued_lines
+                    else:
+                        chunk = await asyncio.to_thread(at.read, 0.5)
+                        lines = at.feed(chunk)
             except Exception as exc:
                 if "timeout" in type(exc).__name__.lower():
                     continue

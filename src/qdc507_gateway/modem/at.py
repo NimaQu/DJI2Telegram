@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
@@ -43,6 +44,29 @@ class ATSession:
         self.read = read
         self._buffer = bytearray()
         self.urcs: List[str] = []
+        self._pending_direct_sms_pdu = False
+
+    def _route_urc(self, line: str) -> bool:
+        """Keep unsolicited notifications out of in-flight command responses."""
+        upper = line.upper()
+        if self._pending_direct_sms_pdu:
+            self._pending_direct_sms_pdu = False
+            if re.fullmatch(r"[0-9A-F]{20,}", upper):
+                self.urcs.append(line)
+                return True
+        if upper.startswith("+CMT:"):
+            self.urcs.append(line)
+            self._pending_direct_sms_pdu = True
+            return True
+        if upper in URC_LINES or upper.startswith(URC_PREFIXES):
+            self.urcs.append(line)
+            return True
+        return False
+
+    def drain_urcs(self) -> List[str]:
+        lines = self.urcs[:]
+        self.urcs.clear()
+        return lines
 
     def feed(self, data: bytes) -> List[str]:
         self._buffer.extend(data)
@@ -78,10 +102,7 @@ class ATSession:
                 terminal = classify_terminal_line(line)
                 if terminal:
                     return ATResponse(tuple(lines), terminal)
-                upper = line.upper()
-                if upper in URC_LINES or upper.startswith(URC_PREFIXES):
-                    self.urcs.append(line)
-                else:
+                if not self._route_urc(line):
                     lines.append(line)
         return ATResponse(tuple(lines), None)
 
