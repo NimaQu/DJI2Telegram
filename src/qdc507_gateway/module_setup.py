@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Callable, Protocol
 
 from qdc507_gateway.modem.usbcfg import USBConfiguration, parse_usb_configuration
@@ -100,6 +101,8 @@ async def setup_module(
     voice_controller: VoiceController | None,
     *,
     progress: Callable[[str], None] | None = None,
+    vendor_id: int = 0x2C7C,
+    product_id: int = 0x0125,
 ) -> dict[str, Any]:
     """Provision one QDC507 without sending SMS, dialing, or using USB networking.
 
@@ -108,21 +111,22 @@ async def setup_module(
     fails. No persistent command is retried automatically.
     """
 
+    target = replace(TARGET_USB_CONFIGURATION, vendor_id=vendor_id, product_id=product_id)
     notify = progress or (lambda _message: None)
     notify("Reading current USBCFG")
     before = await _read_usbcfg(service)
-    changed = before != TARGET_USB_CONFIGURATION
+    changed = before != target
     restarted = False
 
     if changed:
         notify("Writing complete ADB+Audio USBCFG")
-        await service.at(TARGET_USB_CONFIGURATION.command, timeout_ms=5000)
+        await service.at(target.command, timeout_ms=5000)
         notify("Restarting the module once to activate USBCFG")
         await service.at("AT+CFUN=1,1", timeout_ms=10000)
         restarted = True
 
     after = await _read_usbcfg(service)
-    if after != TARGET_USB_CONFIGURATION:
+    if after != target:
         raise ModuleSetupError(
             "USBCFG did not match the complete ADB+Audio target after setup"
         )
@@ -164,7 +168,7 @@ async def setup_module(
     notify("Module setup completed")
     return {
         "ready": True,
-        "identity": "2C7C:0125",
+        "identity": f"{vendor_id:04X}:{product_id:04X}",
         "usbcfg": {
             "changed": changed,
             "restarted": restarted,

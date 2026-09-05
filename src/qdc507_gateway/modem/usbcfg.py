@@ -23,9 +23,12 @@ class USBConfiguration:
 
     @property
     def is_full_target(self) -> bool:
+        return self.is_full_target_for(0x2C7C, 0x0125)
+
+    def is_full_target_for(self, vendor_id: int, product_id: int) -> bool:
         return (
-            self.vendor_id == 0x2C7C
-            and self.product_id == 0x0125
+            self.vendor_id == vendor_id
+            and self.product_id == product_id
             and self.diagnostic and self.nmea and self.at and self.modem
             and self.network and self.adb and self.audio
         )

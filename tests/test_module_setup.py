@@ -186,3 +186,36 @@ def test_module_setup_rejects_non_root_adb_without_reauthorizing():
 def test_module_setup_cli_requires_explicit_confirmation():
     with pytest.raises(SystemExit, match="pass --confirm"):
         main(["module-setup"])
+
+
+def test_setup_preserves_configured_dji_identity():
+    from dataclasses import replace
+    from qdc507_gateway.modem.usbcfg import parse_usbcfg_command
+
+    target = replace(TARGET_USB_CONFIGURATION, vendor_id=0x2CA3, product_id=0x4006)
+
+    class DJIService(FakeModuleService):
+        async def at(self, command, timeout_ms=3000):
+            self.commands.append(command)
+            if command == 'AT+QCFG="USBCFG"':
+                return _readback(self.configuration)
+            if command == target.command:
+                self.pending = parse_usbcfg_command(command)
+                return {"ok": True, "terminal": "OK"}
+            if command == "AT+CFUN=1,1":
+                self.configuration = self.pending
+                return {"operation": "cfun", "reenumerated": True}
+            raise AssertionError(command)
+
+    service = DJIService(replace(target, adb=False, audio=False), adb_available=True)
+    result = asyncio.run(setup_qdc507_module(
+        service, None, vendor_id=0x2CA3, product_id=0x4006,
+    ))
+    assert result["ready"] and result["identity"] == "2CA3:4006"
+    assert service.configuration == target
+    assert service.commands.count(target.command) == 1
+    assert service.commands.count("AT+CFUN=1,1") == 1
+    service.commands.clear()
+    asyncio.run(setup_qdc507_module(service, None, vendor_id=0x2CA3, product_id=0x4006))
+    assert target.command not in service.commands
+    assert "AT+CFUN=1,1" not in service.commands

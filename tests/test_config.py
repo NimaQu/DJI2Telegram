@@ -170,3 +170,35 @@ user_id = 456
     assert json.loads(output)["telegram"]["configured"] is True
     assert json.loads(output)["telegram"]["bot_configured"] is True
     assert json.loads(output)["server"]["enabled"] is True
+
+
+def test_usb_ids_from_config_and_environment(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[usb]\nvendor_id = 0x2ca3\nproduct_id = 0x4006\n')
+    settings = Settings.load(path, environ={})
+    assert (settings.usb_vendor_id, settings.usb_product_id) == (0x2CA3, 0x4006)
+    settings = Settings.load(path, environ={"QDC507_USB_PRODUCT_ID": "0x0125"})
+    assert settings.usb_product_id == 0x0125
+
+
+@pytest.mark.parametrize("value", ['true', '-1', '65536', '1.5', '"invalid"'])
+def test_invalid_usb_id_rejected(tmp_path, value):
+    path = tmp_path / "config.toml"
+    path.write_text(f'[usb]\nvendor_id = {value}\n')
+    with pytest.raises(ConfigurationError, match="usb.vendor_id"):
+        Settings.load(path, environ={})
+
+
+def test_probe_uses_configured_usb_identity(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "config.toml"
+    config.write_text('[usb]\nvendor_id = 0x2ca3\nproduct_id = 0x4006\n')
+    fixture = tmp_path / "device.json"
+    fixture.write_text(json.dumps({
+        "vendor_id": "0x2ca3", "product_id": "0x4006", "interfaces": [],
+    }))
+    assert main(["probe", "--fixture", str(fixture)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["found"]
+    assert result["device"]["vendor_id"] == 0x2CA3
+    assert result["warnings"]  # Device discovery does not imply ADB/audio readiness.

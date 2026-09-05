@@ -158,6 +158,23 @@ sudo /usr/local/bin/uv run --frozen python gateway.py config-check
 
 ## 3. USB、ADB 和音频前置检查
 
+USB VID/PID 可在 `config.toml` 中配置；省略时仍使用 `2c7c:0125`。
+对于 `lsusb` 显示为 `2ca3:4006` 的 EG25G-QDC507，添加：
+
+```toml
+[usb]
+vendor_id = 0x2ca3
+product_id = 0x4006
+```
+
+也可通过 `QDC507_USB_VENDOR_ID` / `QDC507_USB_PRODUCT_ID` 覆盖，值如 `0x2ca3`。
+配置用于 probe、AT/ADB 连接、热插拔、状态显示和宿主机 ALSA 声卡识别。
+`module-setup` 使用相同 VID/PID 启用完整接口组合，不会强制改为 `2c7c:0125`。
+下方 `lsusb -d` 的 ID 也应替换为实际配置值。
+设置 ID 只解决设备选择，不保证其他型号或固件兼容。已提供的 `2ca3:4006` 描述有
+5 个厂商接口，尚无 ADB/UAC；完整语音功能仍需初始化并验证固件、ADB 和音频。
+
+
 ```sh
 lsusb -d 2c7c:0125
 cd /root/DJI2Telegram
@@ -179,7 +196,7 @@ sudo /usr/local/bin/uv run --frozen python gateway.py module-setup --confirm
 ```
 
 `module-setup` 会先读取 USBCFG。如果不是完整目标，它只写入一次
-`2C7C:0125,diagnostic=1,nmea=1,at=1,modem=1,network=1,adb=1,audio=1`，再执行一次
+配置中的 VID/PID 和 `diagnostic=1,nmea=1,at=1,modem=1,network=1,adb=1,audio=1`，再执行一次
 `CFUN=1,1` 并等待同一物理 USB 设备重枚举。随后它检测 ADB root；只有 ADB 尚不可用时才执行
 QADBKEY 授权，最后上传并自检 `[module]` 配置的 voice runtime。重复执行时，已经正确的 USBCFG
 不会再次写入或重启模块。

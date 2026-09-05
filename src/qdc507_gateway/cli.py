@@ -14,16 +14,16 @@ from qdc507_gateway.storage.database import Database
 from qdc507_gateway.usb.descriptors import JSONDeviceLocator, LibUSBDeviceLocator
 
 
-def _probe(args: argparse.Namespace, _settings: Settings) -> int:
+def _probe(args: argparse.Namespace, settings: Settings) -> int:
     locator = JSONDeviceLocator(args.fixture) if args.fixture else LibUSBDeviceLocator()
     try:
-        devices = locator.find()
+        devices = locator.find(settings.usb_vendor_id, settings.usb_product_id)
     finally:
         closer = getattr(locator, "close", None)
         if callable(closer):
             closer()
     if not devices:
-        report = USBProbeReport(False, None, ("QDC507 2C7C:0125 was not found",))
+        report = USBProbeReport(False, None, (f"QDC507 {settings.usb_vendor_id:04X}:{settings.usb_product_id:04X} was not found",))
     else:
         device = devices[0]
         warnings = []
@@ -99,7 +99,10 @@ def _adb_authorize(args: argparse.Namespace, settings: Settings) -> int:
     from qdc507_gateway.modem.service import LiveModuleService
 
     database = Database(":memory:")
-    service = LiveModuleService(database, EventBus(), lock_path=settings.lock_path)
+    service = LiveModuleService(
+        database, EventBus(), lock_path=settings.lock_path,
+        vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id,
+    )
 
     async def authorize() -> bool:
         try:
@@ -139,6 +142,7 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
         EventBus(),
         lock_path=settings.lock_path,
         locator=locator,
+        vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id,
     )
     voice_controller = ModuleVoiceController(
         service.open_adb_client,
@@ -151,7 +155,10 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
         print(f"module-setup: {message}", file=sys.stderr, flush=True)
 
     async def run_setup() -> dict[str, object]:
-        return await setup_module(service, voice_controller, progress=progress)
+        return await setup_module(
+            service, voice_controller, progress=progress,
+            vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id,
+        )
 
     try:
         result = asyncio.run(run_setup())
@@ -181,6 +188,7 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
             "host": settings.host,
             "port": settings.port,
         },
+        "usb": {"vendor_id": f"0x{settings.usb_vendor_id:04X}", "product_id": f"0x{settings.usb_product_id:04X}"},
         "logging": {"level": settings.log_level},
         "security": {
             "auth_max_failures": settings.auth_max_failures,

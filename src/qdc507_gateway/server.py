@@ -63,7 +63,7 @@ def build_app(settings: Optional[Settings] = None):
         )
 
     events = EventBus(persist=persist_event)
-    locator = LibUSBDeviceLocator()
+    locator = LibUSBDeviceLocator(vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id)
     state = {
         "status": {
             "service": "DJI2Telegram",
@@ -83,6 +83,7 @@ def build_app(settings: Optional[Settings] = None):
         events,
         lock_path=settings.lock_path,
         locator=locator,
+        vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id,
         state=state,
     )
     runtime = GatewayRuntime(locator, database, events, state)
@@ -180,6 +181,7 @@ def build_app(settings: Optional[Settings] = None):
         lambda: telegram_service.call_bridge,
         event_publisher=events.publish,
         module_runtime=module_voice_runtime,
+        vendor_id=settings.usb_vendor_id, product_id=settings.usb_product_id,
     )
     call_orchestrator = CallBridgeOrchestrator(
         coordinator=call_coordinator,
