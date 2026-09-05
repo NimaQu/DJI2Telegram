@@ -158,22 +158,10 @@ sudo /usr/local/bin/uv run --frozen python gateway.py config-check
 
 ## 3. USB、ADB 和音频前置检查
 
-USB VID/PID 可在 `config.toml` 中配置；省略时仍使用 `2c7c:0125`。
-对于 `lsusb` 显示为 `2ca3:4006` 的 EG25G-QDC507，添加：
-
-```toml
-[usb]
-vendor_id = 0x2ca3
-product_id = 0x4006
-```
-
-也可通过 `QDC507_USB_VENDOR_ID` / `QDC507_USB_PRODUCT_ID` 覆盖，值如 `0x2ca3`。
-配置用于 probe、AT/ADB 连接、热插拔、状态显示和宿主机 ALSA 声卡识别。
-`module-setup` 使用相同 VID/PID 启用完整接口组合，不会强制改为 `2c7c:0125`。
-下方 `lsusb -d` 的 ID 也应替换为实际配置值。
-设置 ID 只解决设备选择，不保证其他型号或固件兼容。已提供的 `2ca3:4006` 描述有
-5 个厂商接口，尚无 ADB/UAC；完整语音功能仍需初始化并验证固件、ADB 和音频。
-
+日常运行固定使用 `2c7c:0125`，无需在配置文件中设置 USB ID。
+`module-setup` 自动识别原始 DJI `2ca3:4006` 或已转换的 `2c7c:0125`，
+将模块初始化为 `2c7c:0125`。旧配置中的 `[usb]` 和 `QDC507_USB_*` 环境变量不再使用，可以删除。
+QDC507GLEFM21 实机已验证 ID 转换、ADB root 和语音运行时自检。
 
 ```sh
 lsusb -d 2c7c:0125
@@ -183,7 +171,8 @@ aplay -l
 arecord -l
 ```
 
-Probe 必须看到 descriptor 匹配的 ADB `FF/42/01`、UAC 7/8/9 和音频 endpoint。它不会 claim、reset、
+初始化后 Probe 应看到 descriptor 匹配的 ADB `FF/42/01`、UAC 和双向音频 endpoint；
+接口编号随 USB 配置变化，不要求固定为 7/8/9。它不会 claim、reset、
 写 AT 或改变模块设置。
 
 新模块的出厂 USBCFG 通常不包含本项目需要的完整 ADB + Audio 组合。确认 systemd 服务、宿主机
@@ -195,11 +184,21 @@ cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py module-setup --confirm
 ```
 
-`module-setup` 会先读取 USBCFG。如果不是完整目标，它只写入一次
-配置中的 VID/PID 和 `diagnostic=1,nmea=1,at=1,modem=1,network=1,adb=1,audio=1`，再执行一次
-`CFUN=1,1` 并等待同一物理 USB 设备重枚举。随后它检测 ADB root；只有 ADB 尚不可用时才执行
-QADBKEY 授权，最后上传并自检 `[module]` 配置的 voice runtime。重复执行时，已经正确的 USBCFG
-不会再次写入或重启模块。
+`module-setup` 先读取 USBCFG、IMS 和真实 USB 接口，并将原设置保存到
+`[app].data_dir/module-backups/` 的 `0600` JSON 文件。ADB 位为 0 时，先执行 QADBKEY
+授权，再写入 `2c7c:0125` 和 `1,1,1,1,1,1,1`。QDC507GLEFM21 实测在授权前写入会
+返回 `OK` 却保留 ADB=0，因此必须在重启前回读确认，不能把 `OK` 当作配置生效。
+IMS 仅在配置不是 1 时写入 `ims=1`。
+
+配置改变或实际 ADB/UAC 接口缺失时，执行一次 `CFUN=1,1`，等待原物理端口上的模块
+重新枚举；最多等待 90 秒，并可识别 ID 从 DJI 变为 Quectel。重连后验证保存配置、
+实际 ADB 和双向 UAC、ADB root、内核与 voice runtime。已就绪的模块不会重复写入或重启。
+IMS 的第二项（VoLTE 能力）如实返回，`ims=1,0` 不等同于已完成运营商通话验证。
+
+**KVM/PVE 用户：转换前建议按物理 USB 端口直通。** 如果仍按 `2ca3:4006` 直通，模块
+转换后会从虚拟机消失，需要在宿主机改为 `2c7c:0125` 或物理端口直通，再运行同一命令。
+失败时保留备份和当前状态，不自动反复写配置或将设备切回旧 ID；修好直通后可以继续执行。
+初始化不修改 `config.toml`。
 
 这个初始化不会发送短信、拨号、配置 USB 网卡或通过模块联网。`network=1` 只是保持当前复合 USB
 descriptor 的完整目标；命令不会在宿主机上启用该网络接口。输出不会包含 QADBKEY challenge、

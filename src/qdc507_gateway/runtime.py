@@ -56,7 +56,7 @@ class GatewayRuntime:
                         ),
                     )
                 else:
-                    report = USBProbeReport(False, None, ("configured QDC507 USB device was not found",))
+                    report = USBProbeReport(False, None, ("QDC507 2C7C:0125 was not found",))
             except Exception as exc:
                 message = f"USB probe failed: {type(exc).__name__}"
                 self.state["status"] = {**self.state.get("status", {}), "module_state": "error", "last_error": message}

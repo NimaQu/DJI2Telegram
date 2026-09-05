@@ -4,12 +4,6 @@
 data_dir = "data"
 lock_path = "data/device.lock"
 
-[usb]
-# Match lsusb. For DJI EG25G-QDC507 use 0x2ca3 / 0x4006.
-# module-setup preserves these IDs while enabling ADB + Audio.
-vendor_id = 0x2c7c
-product_id = 0x0125
-
 [server]
 # false keeps the Telegram/module gateway running without opening any HTTP,
 # REST, SSE, WebSocket, OpenAPI, or static web-console listening socket.

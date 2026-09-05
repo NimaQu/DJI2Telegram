@@ -234,12 +234,6 @@ def test_audio_stats_and_pcm16_resampling(tmp_path):
     assert {item.name for item in endpoints} == {"hw:9,0"}
     assert {item.direction for item in endpoints} == {"capture", "playback"}
 
-    (usb / "idVendor").write_text("2ca3\n", encoding="ascii")
-    (usb / "idProduct").write_text("4006\n", encoding="ascii")
-    assert find_qdc507_pcm_devices(tmp_path) == ()
-    configured = find_qdc507_pcm_devices(tmp_path, 0x2CA3, 0x4006)
-    assert configured == endpoints
-
 
 def test_audio_adapter_reports_missing_uac_without_claiming_devices(tmp_path):
     async def run():

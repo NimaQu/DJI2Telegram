@@ -74,7 +74,7 @@ class LibUSBDeviceSession:
                 raise
         if self._owns_context:
             self.context.close()
-        raise LiveUSBError(f"QDC507 {self.vendor_id:04X}:{self.product_id:04X} was not found")
+        raise LiveUSBError("QDC507 2C7C:0125 was not found")
 
     def _require_open(self) -> None:
         if self.handle is None or self.snapshot is None:

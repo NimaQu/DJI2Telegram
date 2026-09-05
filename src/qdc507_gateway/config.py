@@ -77,16 +77,6 @@ def _positive_int(value: Any, field: str) -> int:
     return result
 
 
-def _usb_id(value: Any, field: str) -> int:
-    try:
-        result = int(value, 0) if isinstance(value, str) else value
-    except ValueError as exc:
-        raise ConfigurationError(f"{field} must be a USB ID (e.g. 0x2ca3)") from exc
-    if type(result) is not int or not 0 <= result <= 0xFFFF:
-        raise ConfigurationError(f"{field} must be an integer between 0 and 65535")
-    return result
-
-
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = Path("/var/lib/qdc507-gateway")
@@ -109,12 +99,8 @@ class Settings:
     auth_failure_window_seconds: int = 300
     auth_block_seconds: int = 900
     config_path: Path | None = None
-    usb_vendor_id: int = 0x2C7C
-    usb_product_id: int = 0x0125
 
     def __post_init__(self) -> None:
-        _usb_id(self.usb_vendor_id, "usb.vendor_id")
-        _usb_id(self.usb_product_id, "usb.product_id")
         if self.incoming_call_frontend not in {"web", "telegram", "auto"}:
             raise ConfigurationError("calls.incoming_frontend must be web, telegram, or auto")
         if not self.web_enabled and self.incoming_call_frontend == "web":
@@ -170,7 +156,6 @@ class Settings:
         telegram = _table(document, "telegram")
         calls = _table(document, "calls")
         module = _table(document, "module")
-        usb = _table(document, "usb")
         logging_config = _table(document, "logging")
         security = _table(document, "security")
         legacy_telegram_fields = {"personal_user_id", "admin_user_ids"} & set(telegram)
@@ -291,10 +276,4 @@ class Settings:
                 "security.auth_block_seconds",
             ),
             config_path=config_path,
-            usb_vendor_id=_usb_id(
-                env.get("QDC507_USB_VENDOR_ID", usb.get("vendor_id", 0x2C7C)), "usb.vendor_id",
-            ),
-            usb_product_id=_usb_id(
-                env.get("QDC507_USB_PRODUCT_ID", usb.get("product_id", 0x0125)), "usb.product_id",
-            ),
         )

@@ -139,13 +139,9 @@ class AlsaNTgCallsAudioAdapter:
         sysfs_root: str | Path = "/sys",
         event_publisher: Optional[Callable[[GatewayEvent], Awaitable[Any]]] = None,
         module_runtime: Any = None,
-        vendor_id: int = 0x2C7C,
-        product_id: int = 0x0125,
     ):
         self.telegram_bridge_getter = telegram_bridge_getter
         self.sysfs_root = sysfs_root
-        self.vendor_id = vendor_id
-        self.product_id = product_id
         # Ten 20 ms frames cap one-way queueing at about 200 ms. A one-second
         # buffer made browser-to-cellular latency approach 1,000 ms under
         # normal WebAudio jitter and is not useful for an interactive call.
@@ -226,7 +222,7 @@ class AlsaNTgCallsAudioAdapter:
             else:
                 await asyncio.to_thread(self.module_runtime.prepare_and_start)
             self._module_runtime_started = True
-        endpoints = find_qdc507_pcm_devices(self.sysfs_root, self.vendor_id, self.product_id)
+        endpoints = find_qdc507_pcm_devices(self.sysfs_root)
         captures = [item for item in endpoints if item.direction == "capture"]
         playbacks = [item for item in endpoints if item.direction == "playback"]
         if not captures or not playbacks:

@@ -64,6 +64,7 @@ class FakeADB:
 
 class FakeModuleService:
     def __init__(self, configuration, adb_available, adb_root=True):
+        self.ims = [1, 0]
         self.configuration = configuration
         self.adb_available = adb_available
         self.adb_root = adb_root
@@ -73,16 +74,27 @@ class FakeModuleService:
 
     async def at(self, command, timeout_ms=3000):
         self.commands.append(command)
+        if command == 'AT+QCFG="ims"':
+            return {"ok": True, "lines": [f'+QCFG: "ims",{self.ims[0]},{self.ims[1]}']}
+        if command == 'AT+QCFG="ims",1':
+            self.ims[0] = 1
+            return {"ok": True}
         if command == 'AT+QCFG="USBCFG"':
             return _readback(self.configuration)
         if command == TARGET_USB_CONFIGURATION.command:
-            # The persistent value is intentionally not made active until the
-            # one explicit CFUN reset below.
+            self.configuration = TARGET_USB_CONFIGURATION
+            # Saved USBCFG changes immediately; descriptors activate at reset.
             return {"ok": True, "terminal": "OK", "lines": []}
         if command == "AT+CFUN=1,1":
             self.configuration = TARGET_USB_CONFIGURATION
             return {"operation": "cfun", "changed": True, "reenumerated": True}
         raise AssertionError(command)
+
+    async def usb_capabilities(self):
+        return {"adb": self.configuration.adb, "audio": self.configuration.audio}
+
+    async def authorize_adb_for_setup(self):
+        return await self.authorize_adb()
 
     async def authorize_adb(self):
         self.authorize_calls += 1
@@ -134,12 +146,8 @@ def test_module_setup_applies_usbcfg_restarts_authorizes_and_tests_voice_once():
         "tested": True,
         "runtime_version": "test-runtime",
     }
-    assert service.commands == [
-        'AT+QCFG="USBCFG"',
-        TARGET_USB_CONFIGURATION.command,
-        "AT+CFUN=1,1",
-        'AT+QCFG="USBCFG"',
-    ]
+    assert service.commands.count(TARGET_USB_CONFIGURATION.command) == 1
+    assert service.commands.count("AT+CFUN=1,1") == 1
     assert service.authorize_calls == 1
     assert voice.started == 1
     assert voice.stopped == 1
@@ -154,7 +162,8 @@ def test_module_setup_is_idempotent_when_configuration_and_adb_are_ready():
     assert result["usbcfg"]["restarted"] is False
     assert result["adb"]["authorized_now"] is False
     assert result["voice_runtime"] == {"configured": False, "tested": False}
-    assert service.commands == ['AT+QCFG="USBCFG"', 'AT+QCFG="USBCFG"']
+    assert TARGET_USB_CONFIGURATION.command not in service.commands
+    assert "AT+CFUN=1,1" not in service.commands
     assert service.authorize_calls == 0
 
 
@@ -169,7 +178,7 @@ def test_module_setup_fails_closed_if_target_does_not_survive_restart():
     service = BrokenService(LEGACY_USB_CONFIGURATION, adb_available=False)
     with pytest.raises(ModuleSetupError, match="did not match"):
         asyncio.run(setup_qdc507_module(service, None))
-    assert service.authorize_calls == 0
+    assert service.authorize_calls == 1
 
 
 def test_module_setup_rejects_non_root_adb_without_reauthorizing():
@@ -188,34 +197,56 @@ def test_module_setup_cli_requires_explicit_confirmation():
         main(["module-setup"])
 
 
-def test_setup_preserves_configured_dji_identity():
+def test_locked_firmware_requires_authorization_before_usb_write(tmp_path):
+    import json
     from dataclasses import replace
-    from qdc507_gateway.modem.usbcfg import parse_usbcfg_command
 
-    target = replace(TARGET_USB_CONFIGURATION, vendor_id=0x2CA3, product_id=0x4006)
-
-    class DJIService(FakeModuleService):
+    class LockedFirmware(FakeModuleService):
+        unlocked = False
+        async def authorize_adb_for_setup(self):
+            self.unlocked = True
+            return await super().authorize_adb_for_setup()
         async def at(self, command, timeout_ms=3000):
-            self.commands.append(command)
-            if command == 'AT+QCFG="USBCFG"':
-                return _readback(self.configuration)
-            if command == target.command:
-                self.pending = parse_usbcfg_command(command)
-                return {"ok": True, "terminal": "OK"}
-            if command == "AT+CFUN=1,1":
-                self.configuration = self.pending
-                return {"operation": "cfun", "reenumerated": True}
-            raise AssertionError(command)
+            if command == TARGET_USB_CONFIGURATION.command:
+                assert self.unlocked
+                saved = list(tmp_path.glob("*.json"))
+                assert len(saved) == 1
+                assert json.loads(saved[0].read_text())["usb"]["vendor_id"] == "0x2CA3"
+            return await super().at(command, timeout_ms)
 
-    service = DJIService(replace(target, adb=False, audio=False), adb_available=True)
-    result = asyncio.run(setup_qdc507_module(
-        service, None, vendor_id=0x2CA3, product_id=0x4006,
-    ))
-    assert result["ready"] and result["identity"] == "2CA3:4006"
-    assert service.configuration == target
-    assert service.commands.count(target.command) == 1
+    service = LockedFirmware(replace(LEGACY_USB_CONFIGURATION, vendor_id=0x2CA3, product_id=0x4006), False)
+    service.ims = [0, 0]
+    result = asyncio.run(setup_qdc507_module(service, None, backup_dir=tmp_path))
+    assert result["ready"] and result["identity"] == "2C7C:0125"
+    assert result["ims"] == {"changed": True, "configuration": 1, "volte_capability": 0}
+    assert service.commands.count(TARGET_USB_CONFIGURATION.command) == 1
     assert service.commands.count("AT+CFUN=1,1") == 1
-    service.commands.clear()
-    asyncio.run(setup_qdc507_module(service, None, vendor_id=0x2CA3, product_id=0x4006))
-    assert target.command not in service.commands
+
+
+def test_setup_restarts_when_saved_settings_do_not_match_live_descriptors():
+    class Firmware(FakeModuleService):
+        rebooted = False
+        async def usb_capabilities(self):
+            return {"adb": self.rebooted, "audio": self.rebooted}
+        async def at(self, command, timeout_ms=3000):
+            result = await super().at(command, timeout_ms)
+            if command == "AT+CFUN=1,1":
+                self.rebooted = True
+            return result
+    service = Firmware(TARGET_USB_CONFIGURATION, True)
+    result = asyncio.run(setup_qdc507_module(service, None))
+    assert result["usbcfg"]["restarted"]
+    assert TARGET_USB_CONFIGURATION.command not in service.commands
+
+
+def test_setup_does_not_restart_after_unaccepted_staged_usb_readback():
+    class Firmware(FakeModuleService):
+        async def at(self, command, timeout_ms=3000):
+            if command == TARGET_USB_CONFIGURATION.command:
+                self.commands.append(command)
+                return {"ok": True}
+            return await super().at(command, timeout_ms)
+    service = Firmware(LEGACY_USB_CONFIGURATION, False)
+    with pytest.raises(ModuleSetupError, match="stopped before restart"):
+        asyncio.run(setup_qdc507_module(service, None))
     assert "AT+CFUN=1,1" not in service.commands

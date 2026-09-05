@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import asyncio
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
 from typing import Any, Callable, Protocol
 
 from qdc507_gateway.modem.usbcfg import USBConfiguration, parse_usb_configuration
@@ -25,6 +30,12 @@ TARGET_USB_CONFIGURATION = USBConfiguration(
 
 class ModuleService(Protocol):
     async def at(self, command: str, timeout_ms: int = 3000) -> dict[str, Any]:
+        ...
+
+    async def authorize_adb_for_setup(self) -> bool:
+        ...
+
+    async def usb_capabilities(self) -> dict[str, Any]:
         ...
 
     async def authorize_adb(self) -> bool:
@@ -101,37 +112,67 @@ async def setup_module(
     voice_controller: VoiceController | None,
     *,
     progress: Callable[[str], None] | None = None,
-    vendor_id: int = 0x2C7C,
-    product_id: int = 0x0125,
+    backup_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Provision one QDC507 without sending SMS, dialing, or using USB networking.
 
-    A non-target USBCFG is written exactly once and followed by exactly one
-    CFUN reset. QADBKEY is attempted only when a direct ADB connection check
-    fails. No persistent command is retried automatically.
+    Unlock QADBKEY before writing an inactive ADB bit, then verify staged
+    settings and reset once if settings or live descriptors need activation.
+    No persistent command is retried automatically.
     """
 
-    target = replace(TARGET_USB_CONFIGURATION, vendor_id=vendor_id, product_id=product_id)
+    target = TARGET_USB_CONFIGURATION
     notify = progress or (lambda _message: None)
     notify("Reading current USBCFG")
     before = await _read_usbcfg(service)
+    ims_before = await _read_ims(service)
+    capabilities_before = await service.usb_capabilities()
+    backup_path = None
+    if backup_dir is not None:
+        backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, backup_path = tempfile.mkstemp(prefix="module-before-", suffix=".json", dir=backup_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"usb": _configuration_dict(before), "ims": ims_before,
+                       "restore_usb_command": before.command}, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        notify(f"Saved settings backup: {backup_path}")
     changed = before != target
+    ims_changed = ims_before[0] != 1
     restarted = False
-
+    authorized_before_write = False
+    if not before.adb:
+        notify("Authorizing QADBKEY before enabling the ADB configuration bit")
+        if not await service.authorize_adb_for_setup():
+            raise ModuleSetupError("QADBKEY authorization was not accepted")
+        authorized_before_write = True
+    if ims_changed:
+        notify("Enabling IMS")
+        _accepted(await service.at('AT+QCFG="ims",1', timeout_ms=5000), "IMS write")
+        if (await _read_ims(service))[0] != 1:
+            raise ModuleSetupError("IMS configuration did not change to 1")
     if changed:
         notify("Writing complete ADB+Audio USBCFG")
-        await service.at(target.command, timeout_ms=5000)
-        notify("Restarting the module once to activate USBCFG")
-        await service.at("AT+CFUN=1,1", timeout_ms=10000)
+        _accepted(await service.at(target.command, timeout_ms=5000), "USBCFG write")
+        staged = await _retry_read(lambda: _read_usbcfg(service))
+        if staged != target:
+            raise ModuleSetupError("USBCFG readback does not match target; stopped before restart")
+    if changed or ims_changed or not (capabilities_before["adb"] and capabilities_before["audio"]):
+        notify("Restarting the module once to activate USB/IMS settings")
+        _accepted(await service.at("AT+CFUN=1,1", timeout_ms=10000), "module restart")
         restarted = True
 
-    after = await _read_usbcfg(service)
+    after = await _retry_read(lambda: _read_usbcfg(service))
     if after != target:
-        raise ModuleSetupError(
-            "USBCFG did not match the complete ADB+Audio target after setup"
-        )
+        raise ModuleSetupError("USBCFG did not match the complete ADB+Audio target after setup")
+    actual = await service.usb_capabilities()
+    if not actual["adb"] or not actual["audio"]:
+        raise ModuleSetupError("Saved USBCFG is correct but actual ADB/full-duplex UAC interfaces are missing")
+    ims_after = await _retry_read(lambda: _read_ims(service))
+    if ims_after[0] != 1:
+        raise ModuleSetupError("IMS configuration did not survive restart")
 
-    authorized_now = False
+    authorized_now = authorized_before_write
     notify("Checking direct ADB root access")
     try:
         adb = await _inspect_adb(service)
@@ -168,7 +209,9 @@ async def setup_module(
     notify("Module setup completed")
     return {
         "ready": True,
-        "identity": f"{vendor_id:04X}:{product_id:04X}",
+        "identity": "2C7C:0125",
+        "backup_path": backup_path,
+        "ims": {"changed": ims_changed, "configuration": ims_after[0], "volte_capability": ims_after[1]},
         "usbcfg": {
             "changed": changed,
             "restarted": restarted,
@@ -178,3 +221,29 @@ async def setup_module(
         "adb": {**adb, "authorized_now": authorized_now},
         "voice_runtime": voice_result,
     }
+
+
+def _accepted(response: dict[str, Any], operation: str) -> None:
+    if response.get("ok") or (response.get("operation") in {"usbcfg", "cfun"} and "changed" in response):
+        return
+    raise ModuleSetupError(f"{operation} was not accepted")
+
+
+async def _read_ims(service: ModuleService) -> list[int]:
+    response = await service.at('AT+QCFG="ims"', timeout_ms=5000)
+    if response.get("ok"):
+        for line in response.get("lines", []):
+            match = re.fullmatch(r'\s*\+QCFG:\s*"ims"\s*,\s*([012])\s*,\s*([01])\s*', str(line), re.I)
+            if match:
+                return [int(match[1]), int(match[2])]
+    raise ModuleSetupError("IMS readback was not accepted or malformed")
+
+
+async def _retry_read(operation):
+    for attempt in range(15):
+        try:
+            return await operation()
+        except Exception:
+            if attempt == 14:
+                raise
+            await asyncio.sleep(2)

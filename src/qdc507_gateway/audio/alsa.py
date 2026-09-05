@@ -24,25 +24,25 @@ class AlsaPCMEndpoint:
         return f"hw:{self.card},{self.device}"
 
 
-def _is_qdc507_ancestry(path: Path, vendor_id: int, product_id: int) -> bool:
+def _is_qdc507_ancestry(path: Path) -> bool:
     for ancestor in (path, *path.parents):
         try:
             vendor = (ancestor / "idVendor").read_text(encoding="ascii").strip().lower()
             product = (ancestor / "idProduct").read_text(encoding="ascii").strip().lower()
         except (FileNotFoundError, OSError, UnicodeDecodeError):
             continue
-        if vendor == f"{vendor_id:04x}" and product == f"{product_id:04x}":
+        if vendor == "2c7c" and product == "0125":
             return True
     return False
 
 
-def find_qdc507_pcm_devices(sysfs_root: str | Path = "/sys", vendor_id: int = 0x2C7C, product_id: int = 0x0125) -> tuple[AlsaPCMEndpoint, ...]:
+def find_qdc507_pcm_devices(sysfs_root: str | Path = "/sys") -> tuple[AlsaPCMEndpoint, ...]:
     """Find PCM endpoints whose sound card descends from QDC507 USB sysfs."""
     sound_root = Path(sysfs_root) / "class" / "sound"
     result = []
     for card in sorted(sound_root.glob("card[0-9]*")):
         resolved = card.resolve()
-        if not _is_qdc507_ancestry(resolved, vendor_id, product_id):
+        if not _is_qdc507_ancestry(resolved):
             continue
         for pcm in sorted(card.glob("pcmC*D*[cp]")):
             match = re.fullmatch(r"pcmC(\d+)D(\d+)([cp])", pcm.name)

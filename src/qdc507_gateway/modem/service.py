@@ -236,14 +236,9 @@ class LiveModuleService:
         lock_path: str | Path | None = None,
         locator: Optional[DeviceLocator] = None,
         state: Optional[dict[str, Any]] = None,
-        vendor_id: int = 0x2C7C,
-        product_id: int = 0x0125,
     ):
         self.database = database
         self.events = events
-        self.vendor_id = vendor_id
-        self.product_id = product_id
-        self.identity = f"{vendor_id:04X}:{product_id:04X}"
         self.lock_path = lock_path
         self.locator = locator
         self.state = state
@@ -266,15 +261,12 @@ class LiveModuleService:
         self._on_cellular_connected: Optional[Callable[[], Awaitable[Any]]] = None
         try:
             from qdc507_gateway.usb.udev import PyUdevUSBMonitor, UdevUnavailable
-            self._udev_monitor = PyUdevUSBMonitor(self.vendor_id, self.product_id)
+            self._udev_monitor = PyUdevUSBMonitor()
         except (ImportError, UdevUnavailable):
             self._udev_monitor = None
 
     def _session(self) -> LibUSBDeviceSession:
-        return LibUSBDeviceSession(
-            owner=DeviceOwnerLock(self.lock_path),
-            vendor_id=self.vendor_id, product_id=self.product_id,
-        )
+        return LibUSBDeviceSession(owner=DeviceOwnerLock(self.lock_path))
 
     @property
     def monitoring(self) -> bool:
@@ -424,7 +416,7 @@ class LiveModuleService:
             if result.get("reenumerated"):
                 await self.events.publish(GatewayEvent("module.reenumerated", {
                     "operation": operation,
-                    "identity": self.identity,
+                    "identity": "2C7C:0125",
                 }))
             return result
 
@@ -437,7 +429,7 @@ class LiveModuleService:
         target = parse_usbcfg_command(command)
         if target is None:
             raise ModuleServiceError("invalid USBCFG command")
-        if not target.is_full_target_for(self.vendor_id, self.product_id):
+        if not target.is_full_target:
             raise ModuleServiceError("target USBCFG is not the complete QDC507 target")
 
         session = self._session()
@@ -639,7 +631,7 @@ class LiveModuleService:
             return
         module = dict(self.state.get("module", {}))
         module["connected"] = connected
-        module["identity"] = self.identity if connected else None
+        module["identity"] = "2C7C:0125" if connected else None
         if not connected:
             module["signal"] = None
         if error:
@@ -677,7 +669,7 @@ class LiveModuleService:
                     self._set_connection_state(True)
                     await self.events.publish(GatewayEvent("module.connected", {
                         "source": "at-monitor",
-                        "identity": self.identity,
+                        "identity": "2C7C:0125",
                     }))
                 await self._read_monitor(at, stop)
             except Exception as exc:

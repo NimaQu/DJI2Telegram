@@ -146,9 +146,7 @@ def snapshot_from_libusb_device(device: Any) -> USBDeviceSnapshot:
 class LibUSBDeviceLocator:
     """Descriptor-only libusb locator. It never claims or resets a device."""
 
-    def __init__(self, context: Any = None, *, vendor_id: int = 0x2C7C, product_id: int = 0x0125):
-        self.vendor_id = vendor_id
-        self.product_id = product_id
+    def __init__(self, context: Any = None):
         try:
             import usb1  # type: ignore
         except ImportError as exc:
@@ -157,9 +155,7 @@ class LibUSBDeviceLocator:
         self._owns_context = context is None
         self._context = context if context is not None else usb1.USBContext()
 
-    def find(self, vendor_id: int | None = None, product_id: int | None = None) -> Sequence[USBDeviceSnapshot]:
-        vendor_id = self.vendor_id if vendor_id is None else vendor_id
-        product_id = self.product_id if product_id is None else product_id
+    def find(self, vendor_id: int = 0x2C7C, product_id: int = 0x0125) -> Sequence[USBDeviceSnapshot]:
         result = []
         for device in self._context.getDeviceList(skip_on_error=True):
             if device.getVendorID() != vendor_id or device.getProductID() != product_id:
