@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,8 +100,18 @@ class Settings:
     auth_failure_window_seconds: int = 300
     auth_block_seconds: int = 900
     config_path: Path | None = None
+    network_apn: str | None = None
+    network_pdp_type: str = "IP"
 
     def __post_init__(self) -> None:
+        if self.network_apn is not None and (
+            not isinstance(self.network_apn, str)
+            or len(self.network_apn) > 100
+            or re.fullmatch(r"[A-Za-z0-9_.-]*", self.network_apn) is None
+        ):
+            raise ConfigurationError("network.apn must be empty or an APN of up to 100 ASCII letters, digits, dots, underscores or hyphens")
+        if not isinstance(self.network_pdp_type, str) or self.network_pdp_type not in {"IP", "IPV6", "IPV4V6"}:
+            raise ConfigurationError("network.pdp_type must be IP, IPV6, or IPV4V6")
         if self.incoming_call_frontend not in {"web", "telegram", "auto"}:
             raise ConfigurationError("calls.incoming_frontend must be web, telegram, or auto")
         if not self.web_enabled and self.incoming_call_frontend == "web":
@@ -156,6 +167,7 @@ class Settings:
         telegram = _table(document, "telegram")
         calls = _table(document, "calls")
         module = _table(document, "module")
+        network = _table(document, "network")
         logging_config = _table(document, "logging")
         security = _table(document, "security")
         legacy_telegram_fields = {"personal_user_id", "admin_user_ids"} & set(telegram)
@@ -276,4 +288,6 @@ class Settings:
                 "security.auth_block_seconds",
             ),
             config_path=config_path,
+            network_apn=env.get("QDC507_NETWORK_APN", network.get("apn")),
+            network_pdp_type=env.get("QDC507_NETWORK_PDP_TYPE", network.get("pdp_type", "IP")),
         )

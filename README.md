@@ -156,6 +156,45 @@ cd /root/DJI2Telegram
 sudo /usr/local/bin/uv run --frozen python gateway.py config-check
 ```
 
+## APN 与 LTE 注册
+
+如果 SIM 可读、有信号但 `CEREG` 报注册拒绝，APN 是排查项之一，不能直接据此判断 SIM 损坏。
+在 `config.toml` 中按运营商要求选择：
+
+```toml
+[network]
+apn = "connect"  # 示例：手动 APN，请填写运营商要求的值
+pdp_type = "IP" # IP / IPV6 / IPV4V6
+```
+
+省略 `apn` 表示保持模块现有设置；`apn = ""` 表示明确请求订阅默认 APN。
+空 APN 的语义见 [Quectel AT 手册 §10.2](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)，
+不保证所有运营商都接受空值，也不会在手动 APN 失败后自动切为空值。
+环境变量 `QDC507_NETWORK_APN`（包括空字符串）和 `QDC507_NETWORK_PDP_TYPE` 可覆盖配置。
+
+已经完成 USB 初始化的模块，可以单独执行：
+
+```sh
+sudo systemctl stop dji2telegram
+cd /root/DJI2Telegram
+sudo /usr/local/bin/uv run --frozen python gateway.py network-setup --confirm
+sudo systemctl start dji2telegram
+```
+
+配置了 `apn` 时，`module-setup --confirm` 也会在 USB/ADB/语音自检后执行网络配置。
+这些操作不在服务启动时自动执行。不要在通话进行中运行。
+
+`network-setup` 先读取 PDP 上下文、选网模式和 LTE 注册状态；需要修改时，将原 PDP 类型、
+APN、选网模式和注册状态以 `0600` 文件备份到 `data_dir/module-backups/`。
+它临时执行 `CFUN=0`，仅修改 CID 1 并回读验证，然后恢复 `CFUN=1`；有手动选网配置时
+再执行 `COPS=0` 恢复自动选网。CID 2/3 等其他上下文不写入；若 CID 1 本身用于 IMS/SOS 则停止。
+无须修改且已经注册时不写命令、不切换射频。配置不变但注册失败时，允许显式运行该命令重新入网。
+
+射频关闭后的写入失败也会尝试恢复 `CFUN=1`，并报告备份路径，不重复写 APN。
+随后最多轮询 LTE 注册约 60 秒（自动选网命令另有超时）；输出 `registered` 和注册状态码，
+只有实际处于本地注册或漫游注册时返回退出码 0，否则返回 2。注册成功不等于已验证 VoLTE、
+短信或电话。此流程不修改主机网络、不激活用于上网的数据会话、不发送短信或拨号。
+
 ## 3. USB、ADB 和音频前置检查
 
 日常运行固定使用 `2c7c:0125`，无需在配置文件中设置 USB ID。

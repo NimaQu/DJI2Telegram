@@ -153,10 +153,17 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
         print(f"module-setup: {message}", file=sys.stderr, flush=True)
 
     async def run_setup() -> dict[str, object]:
-        return await setup_module(
+        result = await setup_module(
             service, voice_controller, progress=progress,
             backup_dir=settings.data_dir / "module-backups",
         )
+        if settings.network_apn is not None:
+            from qdc507_gateway.network_setup import setup_network
+            result["network"] = await setup_network(
+                service, settings, backup_dir=settings.data_dir / "module-backups", progress=progress,
+            )
+            result["ready"] = bool(result["network"]["registered"])
+        return result
 
     try:
         result = asyncio.run(run_setup())
@@ -172,8 +179,32 @@ def _module_setup(args: argparse.Namespace, settings: Settings) -> int:
         locator.close()
         database.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if result["ready"] else 2
 
+
+
+def _network_setup(args: argparse.Namespace, settings: Settings) -> int:
+    if not args.confirm:
+        raise SystemExit("network-setup changes APN/operator settings and cycles radio; pass --confirm")
+    from qdc507_gateway.events import EventBus
+    from qdc507_gateway.modem.service import LiveModuleService
+    from qdc507_gateway.network_setup import setup_network
+
+    database = Database(":memory:")
+    service = LiveModuleService(database, EventBus(), lock_path=settings.lock_path)
+    try:
+        result = asyncio.run(setup_network(
+            service, settings, backup_dir=settings.data_dir / "module-backups",
+            progress=lambda message: print(f"network-setup: {message}", file=sys.stderr, flush=True),
+        ))
+    except Exception as exc:
+        print(json.dumps({"registered": False, "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False))
+        return 2
+    finally:
+        service.close()
+        database.close()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["registered"] else 2
 
 def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
     result = {
@@ -186,6 +217,7 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
             "host": settings.host,
             "port": settings.port,
         },
+        "network": {"apn": settings.network_apn, "pdp_type": settings.network_pdp_type},
         "logging": {"level": settings.log_level},
         "security": {
             "auth_max_failures": settings.auth_max_failures,
@@ -264,6 +296,10 @@ def main(argv=None) -> int:
     )
     module_setup.set_defaults(handler=_module_setup)
 
+    network_setup = subparsers.add_parser("network-setup", help="apply optional CID 1 APN and check LTE registration")
+    network_setup.add_argument("--confirm", action="store_true")
+    network_setup.set_defaults(handler=_network_setup)
+
     config_check = subparsers.add_parser(
         "config-check",
         help="validate and print a redacted configuration summary",
@@ -281,6 +317,8 @@ def main(argv=None) -> int:
             "module-setup changes persistent USBCFG and may restart the module; "
             "pass --confirm"
         )
+    if args.subcommand == "network-setup" and not args.confirm:
+        raise SystemExit("network-setup changes APN/operator settings and cycles radio; pass --confirm")
     settings = Settings.load(PROJECT_CONFIG_FILE)
     return args.handler(args, settings)
 

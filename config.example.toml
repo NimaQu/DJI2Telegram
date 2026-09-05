@@ -42,3 +42,10 @@ allow_service_restart = false
 # endpoints and VoLTE ACDB before enabling this call-scoped route.
 voice_manifest = "resources/module-voice/manifest.json"
 voice_resource_dir = "resources/module-voice"
+
+[network]
+# Omit apn to preserve the modem configuration (default).
+# apn = "connect" # Manual APN; use the value required by your operator.
+# apn = ""        # Request the subscription default APN, if supported.
+pdp_type = "IP"   # IP, IPV6, or IPV4V6; applies only when apn is configured.
+# Applied by network-setup --confirm or module-setup --confirm, never on startup.
