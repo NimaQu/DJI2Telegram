@@ -5,6 +5,9 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
 
 from qdc507_gateway import __version__
 from qdc507_gateway.events import EventBus
@@ -20,6 +23,18 @@ from qdc507_gateway.web.calls import (
     extract_audio_ticket,
     public_call_error,
 )
+
+
+class PushRegistration(BaseModel):
+    device_token: str = Field(min_length=2, max_length=512, pattern=r"^[0-9A-Fa-f]+$")
+
+    @field_validator("device_token")
+    @classmethod
+    def normalize_token(cls, value: str) -> str:
+        if len(value) % 2:
+            raise ValueError("device_token must have even hexadecimal length")
+        return value.lower()
+
 
 
 async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
@@ -60,7 +75,7 @@ async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
 def create_app(database: Database, events: EventBus, state: Optional[Dict[str, Any]] = None, lifespan=None):
     try:
         from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
-        from fastapi.responses import RedirectResponse, StreamingResponse
+        from fastapi.responses import RedirectResponse, StreamingResponse, Response
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
         raise RuntimeError("FastAPI is required to create the REST application") from exc
@@ -165,6 +180,25 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
                 except RuntimeError as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
         return state.get("module", {"connected": False})
+
+    @app.put("/api/v1/push/devices/{installation_id}")
+    async def register_push(installation_id: UUID, payload: PushRegistration, _: str = Depends(require_token)):
+        service = state.get("apns")
+        if service is None:
+            raise HTTPException(status_code=503, detail="push service is unavailable")
+        return service.register(str(installation_id), payload.device_token)
+
+    @app.delete("/api/v1/push/devices/{installation_id}", status_code=204)
+    async def delete_push(installation_id: UUID, _: str = Depends(require_token)):
+        database.delete_push_device(str(installation_id))
+        return Response(status_code=204)
+
+    @app.get("/api/v1/sms/{sms_id}")
+    async def sms_detail(sms_id: str, _: str = Depends(require_token)):
+        row = database.get_sms(sms_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="SMS not found")
+        return dict(row)
 
     @app.get("/api/v1/sms")
     async def sms(limit: int = 50, unread: Optional[bool] = None, _: str = Depends(require_token)):

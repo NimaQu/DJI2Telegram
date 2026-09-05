@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
+import uuid
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
@@ -9,6 +11,27 @@ from typing import Any, Dict, List, Optional
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS push_devices (
+  installation_id TEXT PRIMARY KEY,
+  device_token TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  bundle_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  registered_at REAL NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(device_token, environment, bundle_id)
+);
+CREATE TABLE IF NOT EXISTS push_jobs (
+  id TEXT PRIMARY KEY,
+  sms_id TEXT NOT NULL,
+  installation_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  next_attempt REAL NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(sms_id, installation_id, version)
+);
+CREATE INDEX IF NOT EXISTS push_jobs_due ON push_jobs(next_attempt);
 CREATE TABLE IF NOT EXISTS sms_messages (
   id TEXT PRIMARY KEY,
   sender TEXT NOT NULL,
@@ -53,6 +76,7 @@ DROP TABLE IF EXISTS api_tokens;
 
 class Database:
     def __init__(self, path: str | Path):
+        self.push_scope: tuple[str, str] | None = None
         self.path = str(path)
         if self.path != ":memory:":
             database_path = Path(self.path)
@@ -116,8 +140,8 @@ class Database:
             )
             self.connection.commit()
 
-    def save_sms(self, message: Dict[str, Any]) -> None:
-        with self._lock:
+    def save_sms(self, message: Dict[str, Any], *, inbound: bool = False) -> None:
+        with self._lock, self.connection:
             self.connection.execute(
                 "INSERT OR REPLACE INTO sms_messages(id, sender, body, timestamp, is_read, raw_pdus) VALUES (?, ?, ?, ?, ?, ?)",
                 (
@@ -125,7 +149,16 @@ class Database:
                     int(bool(message.get("is_read", False))), message.get("raw_pdus", "[]"),
                 ),
             )
-            self.connection.commit()
+            if inbound and self.push_scope is not None:
+                now = time.time()
+                for device in self.connection.execute(
+                    "SELECT installation_id, version FROM push_devices WHERE active=1 AND environment=? AND bundle_id=?",
+                    self.push_scope,
+                ).fetchall():
+                    self.connection.execute(
+                        "INSERT OR IGNORE INTO push_jobs(id,sms_id,installation_id,version,created_at,next_attempt) VALUES (?,?,?,?,?,?)",
+                        (str(uuid.uuid4()), message["id"], device["installation_id"], device["version"], now, now),
+                    )
 
     def record_sms_pdu(
         self,
@@ -196,3 +229,99 @@ class Database:
                 """,
                 (max(1, min(limit, 500)),),
             ))
+
+    def get_sms(self, sms_id: str):
+        with self._lock:
+            return self.connection.execute(
+                "SELECT id,sender,body,timestamp,is_read FROM sms_messages WHERE id=?", (sms_id,)
+            ).fetchone()
+
+    def register_push_device(self, installation_id: str, device_token: str,
+                             environment: str, bundle_id: str) -> None:
+        with self._lock, self.connection:
+            old = self.connection.execute(
+                "SELECT * FROM push_devices WHERE installation_id=?", (installation_id,)
+            ).fetchone()
+            # A token has one owner in a topic/environment, even across reinstallations.
+            duplicates = self.connection.execute(
+                "SELECT installation_id FROM push_devices WHERE device_token=? AND environment=? AND bundle_id=? AND installation_id<>?",
+                (device_token, environment, bundle_id, installation_id),
+            ).fetchall()
+            for row in duplicates:
+                self.connection.execute("DELETE FROM push_jobs WHERE installation_id=?", (row[0],))
+                self.connection.execute("DELETE FROM push_devices WHERE installation_id=?", (row[0],))
+            same = old is not None and old["active"] and (
+                old["device_token"], old["environment"], old["bundle_id"]
+            ) == (device_token, environment, bundle_id)
+            if same:
+                # Refresh timestamp so an older 410 response cannot revoke a fresh registration.
+                self.connection.execute("UPDATE push_devices SET registered_at=? WHERE installation_id=?",
+                                        (time.time(), installation_id))
+                return
+            self.connection.execute("DELETE FROM push_jobs WHERE installation_id=?", (installation_id,))
+            self.connection.execute(
+                "INSERT OR REPLACE INTO push_devices VALUES (?,?,?,?,?,?,1)",
+                (installation_id, device_token, environment, bundle_id, str(uuid.uuid4()), time.time()),
+            )
+
+    def delete_push_device(self, installation_id: str) -> None:
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM push_jobs WHERE installation_id=?", (installation_id,))
+            self.connection.execute("DELETE FROM push_devices WHERE installation_id=?", (installation_id,))
+
+    def next_push_job(self, environment: str, bundle_id: str, now: float):
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM push_jobs WHERE created_at<=?", (now - 86400,))
+            # Changing scope must never replay an old environment's queue later.
+            self.connection.execute(
+                "DELETE FROM push_jobs WHERE NOT EXISTS (SELECT 1 FROM push_devices d WHERE d.installation_id=push_jobs.installation_id AND d.version=push_jobs.version AND d.active=1 AND d.environment=? AND d.bundle_id=?)",
+                (environment, bundle_id),
+            )
+            return self.connection.execute(
+                """SELECT j.*, d.device_token, d.registered_at, s.sender,s.body,s.timestamp
+                FROM push_jobs j JOIN push_devices d ON d.installation_id=j.installation_id AND d.version=j.version
+                JOIN sms_messages s ON s.id=j.sms_id
+                WHERE j.next_attempt<=? ORDER BY j.next_attempt LIMIT 1""", (now,)
+            ).fetchone()
+
+    def finish_push_job(self, job_id: str) -> None:
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM push_jobs WHERE id=?", (job_id,))
+
+    def retry_push_job(self, job_id: str, next_attempt: float) -> None:
+        with self._lock, self.connection:
+            self.connection.execute("UPDATE push_jobs SET attempts=attempts+1,next_attempt=? WHERE id=?",
+                                    (next_attempt, job_id))
+
+    def invalidate_push_device(self, job, invalidated_at: float | None = None) -> None:
+        cutoff = job["registered_at"] if invalidated_at is None else invalidated_at
+        with self._lock, self.connection:
+            changed = self.connection.execute(
+                "UPDATE push_devices SET active=0 WHERE installation_id=? AND version=? AND registered_at<=?",
+                (job["installation_id"], job["version"], cutoff),
+            ).rowcount
+            if changed:
+                self.connection.execute("DELETE FROM push_jobs WHERE installation_id=? AND version=?",
+                                        (job["installation_id"], job["version"]))
+            self.connection.execute("DELETE FROM push_jobs WHERE id=?", (job["id"],))
+
+    def push_counts(self, environment: str, bundle_id: str):
+        with self._lock:
+            devices = self.connection.execute(
+                "SELECT COUNT(*) FROM push_devices WHERE active=1 AND environment=? AND bundle_id=?",
+                (environment, bundle_id),
+            ).fetchone()[0]
+            jobs = self.connection.execute("SELECT COUNT(*) FROM push_jobs").fetchone()[0]
+            return {"active_devices": devices, "queued": jobs}
+
+
+    def reconcile_push_scope(self, environment: str, bundle_id: str) -> None:
+        with self._lock, self.connection:
+            self.connection.execute(
+                "UPDATE push_devices SET active=0 WHERE environment<>? OR bundle_id<>?",
+                (environment, bundle_id),
+            )
+            self.connection.execute(
+                "DELETE FROM push_jobs WHERE created_at<=? OR NOT EXISTS (SELECT 1 FROM push_devices d WHERE d.installation_id=push_jobs.installation_id AND d.version=push_jobs.version AND d.active=1)",
+                (time.time() - 86400,),
+            )

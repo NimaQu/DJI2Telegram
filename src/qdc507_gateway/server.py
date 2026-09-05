@@ -10,6 +10,7 @@ from typing import Optional, Sequence
 
 from qdc507_gateway import __version__
 from qdc507_gateway.api.app import create_app
+from qdc507_gateway.apns import APNsService
 from qdc507_gateway.adb.runtime import ModuleVoiceController, RuntimeManifest
 from qdc507_gateway.audio.bridge import AlsaNTgCallsAudioAdapter
 from qdc507_gateway.config import PROJECT_CONFIG_FILE, Settings
@@ -78,6 +79,8 @@ def build_app(settings: Optional[Settings] = None):
             settings.auth_block_seconds,
         ),
     }
+    apns_service = APNsService(settings, database)
+    state["apns"] = apns_service
     module_service = LiveModuleService(
         database,
         events,
@@ -156,6 +159,8 @@ def build_app(settings: Optional[Settings] = None):
         current_call = await call_coordinator.current()
         return {
             **state.get("status", {}),
+            "apns": apns_service.status(),
+            "public_base_url": settings.public_base_url,
             "uptime_seconds": round(time.monotonic() - service_started_at, 3),
             "module": state.get("module", {"connected": False}),
             "telegram_state": None if telegram is None else telegram.state,
@@ -322,7 +327,8 @@ def build_app(settings: Optional[Settings] = None):
         restart_module=restart_module,
         user_login_allowed=user_login_allowed,
     )
-    module_service.sms_forwarder = telegram_service.forward_sms
+    if settings.telegram_sms_forwarding_enabled:
+        module_service.sms_forwarder = telegram_service.forward_sms
 
     async def reconnect_module():
         await web_audio_diagnostic.stop()
@@ -462,6 +468,7 @@ def build_app(settings: Optional[Settings] = None):
         network_status_task = None
         call_status_task = None
         try:
+            await apns_service.start()
             await runtime.start()
             await telegram_service.start()
             await module_service.start_monitor(
@@ -506,7 +513,10 @@ def build_app(settings: Optional[Settings] = None):
                                 try:
                                     await runtime.stop()
                                 finally:
-                                    database.close()
+                                    try:
+                                        await apns_service.stop()
+                                    finally:
+                                        database.close()
 
     app = create_app(database, events, state, lifespan=lifespan)
     app.state.gateway_database = database

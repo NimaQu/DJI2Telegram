@@ -22,3 +22,6 @@ secrets/
 *.log
 .coverage
 htmlcov/
+
+# APNs signing keys
+*.p8

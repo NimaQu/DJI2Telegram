@@ -103,7 +103,35 @@ class Settings:
     network_apn: str | None = None
     network_pdp_type: str = "IP"
 
+    public_base_url: str | None = None
+    telegram_sms_forwarding_enabled: bool = True
+    apns_enabled: bool = False
+    apns_sandbox: bool = True
+    apns_key_path: Path | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+    apns_bundle_id: str | None = None
+
     def __post_init__(self) -> None:
+        if self.public_base_url:
+            from urllib.parse import urlsplit
+            url = urlsplit(self.public_base_url)
+            if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
+                raise ConfigurationError("server.public_base_url must be an HTTPS origin")
+        if self.apns_enabled:
+            if not all((self.apns_key_path, self.apns_key_id, self.apns_team_id, self.apns_bundle_id)):
+                raise ConfigurationError("apns requires key_path, key_id, team_id and bundle_id")
+            try:
+                from cryptography.hazmat.primitives import serialization
+                from cryptography.hazmat.primitives.asymmetric import ec
+                import jwt
+                key = serialization.load_pem_private_key(self.apns_key_path.read_bytes(), password=None)
+                if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
+                    raise ValueError("expected P-256")
+                jwt.encode({"iss": self.apns_team_id, "iat": 0}, key, algorithm="ES256", headers={"kid": self.apns_key_id})
+            except Exception:
+                raise ConfigurationError("apns.key_path must contain a readable ES256 P-256 private key") from None
+
         if self.network_apn is not None and (
             not isinstance(self.network_apn, str)
             or len(self.network_apn) > 100
@@ -162,6 +190,7 @@ class Settings:
             except tomllib.TOMLDecodeError as exc:
                 raise ConfigurationError(f"invalid TOML in {config_path}: {exc}") from exc
         base_dir = config_path.parent if config_path is not None else Path.cwd()
+        apns = _table(document, "apns")
         app = _table(document, "app")
         server = _table(document, "server")
         telegram = _table(document, "telegram")
@@ -221,6 +250,14 @@ class Settings:
             raise ConfigurationError("logging.level must be a non-empty string")
 
         return cls(
+            public_base_url=_optional_string(env.get("QDC507_PUBLIC_BASE_URL", server.get("public_base_url")), "server.public_base_url"),
+            telegram_sms_forwarding_enabled=_boolean(env.get("QDC507_TELEGRAM_SMS_FORWARDING_ENABLED", telegram.get("sms_forwarding_enabled", True)), "telegram.sms_forwarding_enabled"),
+            apns_enabled=_boolean(env.get("QDC507_APNS_ENABLED", apns.get("enabled", False)), "apns.enabled"),
+            apns_sandbox=_boolean(env.get("QDC507_APNS_SANDBOX", apns.get("sandbox", True)), "apns.sandbox"),
+            apns_key_path=_optional_path(env.get("QDC507_APNS_KEY_PATH", apns.get("key_path")), base_dir, "apns.key_path"),
+            apns_key_id=_optional_string(env.get("QDC507_APNS_KEY_ID", apns.get("key_id")), "apns.key_id"),
+            apns_team_id=_optional_string(env.get("QDC507_APNS_TEAM_ID", apns.get("team_id")), "apns.team_id"),
+            apns_bundle_id=_optional_string(env.get("QDC507_APNS_BUNDLE_ID", apns.get("bundle_id")), "apns.bundle_id"),
             data_dir=data_dir,
             lock_path=lock_path,
             web_enabled=_boolean(

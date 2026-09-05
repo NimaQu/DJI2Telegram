@@ -214,6 +214,7 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
         "lock_path": str(settings.lock_path),
         "server": {
             "enabled": settings.web_enabled,
+            "public_base_url": settings.public_base_url,
             "host": settings.host,
             "port": settings.port,
         },

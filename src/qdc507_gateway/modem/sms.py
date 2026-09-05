@@ -120,7 +120,7 @@ class SMSIngress:
             "is_read": False,
             "raw_pdus": json.dumps(raw_pdus),
         }
-        self.database.save_sms(message)
+        self.database.save_sms(message, inbound=True)
         return message
 
 

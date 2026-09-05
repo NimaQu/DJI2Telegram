@@ -10,6 +10,7 @@ lock_path = "data/device.lock"
 enabled = true
 host = "127.0.0.1"
 port = 8787
+public_base_url = "https://djihub.fubuki.app"
 
 [logging]
 # INFO records lifecycle/call/module events in journald. Use DEBUG temporarily
@@ -27,6 +28,7 @@ auth_block_seconds = 900
 incoming_frontend = "telegram" # telegram, auto, or web for an external API client
 
 [telegram]
+sms_forwarding_enabled = true # Set false to use APNs only for inbound SMS.
 session = "data/telegram.session"
 bot_session = "data/telegram-bot.session"
 # api_id = 123456
@@ -49,3 +51,12 @@ voice_resource_dir = "resources/module-voice"
 # apn = ""        # Request the subscription default APN, if supported.
 pdp_type = "IP"   # IP, IPV6, or IPV4V6; applies only when apn is configured.
 # Applied by network-setup --confirm or module-setup --confirm, never on startup.
+
+[apns]
+enabled = false
+sandbox = true
+# Enabling APNs requires all four fields below. Keep the private key outside Git.
+# key_path = "secrets/AuthKey.p8"
+# key_id = "APPLE_KEY_ID"
+# team_id = "APPLE_TEAM_ID"
+# bundle_id = "your.app.bundle"

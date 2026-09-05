@@ -484,3 +484,9 @@ sudo /usr/local/bin/uv sync --frozen --extra dev
 sudo /usr/local/bin/uv run pytest -q
 sudo /usr/local/bin/uv run ruff check src tests gateway.py
 ```
+
+## iOS 短信 APNs 推送
+
+Bridge 支持通过 APNs 将入站短信直接推送至已注册的 iOS 设备，并提供设备注册、删除和单条短信读取 API。默认关闭 APNs；配置 `.p8`、Key ID、Team ID、Bundle ID 和 sandbox 环境后启用。`telegram.sms_forwarding_enabled=false` 可单独关闭 Telegram 入站短信转发。
+
+完整配置、cloudflared 入口约定、curl 示例及 iOS 通知协议见 [iOS APNs 对接文档](docs/ios-apns.md)。
