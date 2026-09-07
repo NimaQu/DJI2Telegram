@@ -193,11 +193,6 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         database.acknowledge_sms(sms_id)
         return Response(status_code=204)
 
-    @app.post("/api/v1/push/devices/{installation_id}/notifications/{notification_id}/ack", status_code=204, deprecated=True)
-    async def acknowledge_push(installation_id: UUID, notification_id: UUID, _: str = Depends(require_token)):
-        database.acknowledge_push_job(str(installation_id), str(notification_id))
-        return Response(status_code=204)
-
     @app.delete("/api/v1/push/devices/{installation_id}", status_code=204)
     async def delete_push(installation_id: UUID, _: str = Depends(require_token)):
         database.delete_push_device(str(installation_id))

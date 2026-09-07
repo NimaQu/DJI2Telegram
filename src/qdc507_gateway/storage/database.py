@@ -344,14 +344,6 @@ class Database:
         with self._lock, self.connection:
             self.connection.execute("DELETE FROM push_jobs WHERE sms_id=?", (sms_id,))
 
-    def acknowledge_push_job(self, installation_id: str, notification_id: str) -> None:
-        """Legacy endpoint: resolve a pending job, then confirm its SMS globally."""
-        with self._lock, self.connection:
-            self.connection.execute(
-                "DELETE FROM push_jobs WHERE sms_id IN (SELECT sms_id FROM push_jobs WHERE id=? AND installation_id=?)",
-                (notification_id, installation_id),
-            )
-
     def finish_push_job(self, job_id: str) -> None:
         with self._lock, self.connection:
             self.connection.execute("DELETE FROM push_jobs WHERE id=?", (job_id,))

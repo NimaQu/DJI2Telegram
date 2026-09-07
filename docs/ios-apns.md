@@ -122,7 +122,6 @@ curl --fail-with-body -X POST \
 
 `sms_id` 用于全局 ACK 和本地内容去重。收到重复通知时仍需再次 ACK（之前的 ACK 可能没有到达服务器）。ACK 请求失败时客户端应保存待确认记录，并在后续获得网络执行机会时重试。重发和 ACK 并发时，已经在途或交给 Apple 的通知仍可能到达。
 
-payload 中的 `installation_id` 和 `notification_id` 为兼容旧 App 保留，新客户端无需使用它们确认。旧接口 `POST /api/v1/push/devices/{installation_id}/notifications/{notification_id}/ack` 已标记弃用：若仍能找到该待投递任务，也会确认整条短信、停止所有设备重试；旧任务已删除或过期时仅返回 204。
 
 **兼容性变化：旧 App 若不发送 ACK，将重复收到通知直到任务过期。** 本次升级只改变仍在队列中的任务和新任务，之前已按 APNs 200 删除的任务不会补建。
 

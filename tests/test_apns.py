@@ -168,7 +168,7 @@ async def test_request_jwt_and_success(settings, sandbox):
     assert service.status()['queued'] == 1
     payload = json.loads(request.content)
     assert payload['notification_id'] == request.headers['apns-id']
-    database.acknowledge_push_job(payload['installation_id'], payload['notification_id'])
+    database.acknowledge_sms(payload['sms_id'])
     assert service.status()['queued'] == 0
     await service.stop()
 
@@ -282,7 +282,7 @@ async def test_worker_lifecycle_recovers_persisted_jobs(settings):
             break
         await asyncio.sleep(.01)
     assert row['attempts'] == 1 and service.status()['queued'] == 1
-    database.acknowledge_push_job(row['installation_id'], row['id'])
+    database.acknowledge_sms(row['sms_id'])
     assert service.status()['queued'] == 0
     await service.stop()
     assert service.task is None and service.client.is_closed
@@ -363,7 +363,7 @@ async def test_ack_timeout_resends_stable_id_and_stops_after_ack(settings):
     assert now + 120 <= row['next_attempt'] <= now + 121
     assert requests[0].content == requests[1].content
     assert requests[0].headers['apns-id'] == requests[1].headers['apns-id']
-    database.acknowledge_push_job(installation, row['id'])
+    database.acknowledge_sms(row['sms_id'])
     now += 3600
     assert not await service.send_one()
     assert database.get_sms('sms-test')['is_read'] == 0
@@ -392,32 +392,6 @@ async def test_ack_during_inflight_request_cannot_resurrect_job(settings, outcom
     await service.stop()
 
 
-def test_legacy_ack_api_resolves_device_job_but_confirms_globally(settings, tmp_path):
-    db = Database(tmp_path / 'ack.sqlite3')
-    service = APNsService(settings, db)
-    first, second = str(uuid.uuid4()), str(uuid.uuid4())
-    service.register(first, 'aa')
-    service.register(second, 'bb')
-    sms(db)
-    job = db.connection.execute('SELECT * FROM push_jobs WHERE installation_id=?', (first,)).fetchone()
-    db.replace_token(hash_token('ack-test'), 'now')
-    client = TestClient(create_app(db, EventBus(), {'apns': service}))
-    path = f"/api/v1/push/devices/{first}/notifications/{job['id']}/ack"
-    headers = {'Authorization': 'Bearer ack-test'}
-    assert client.post(path).status_code == 401
-    assert client.post(path.replace(first, second), headers=headers).status_code == 204
-    assert service.status()['queued'] == 2
-    assert client.post(path.replace(job['id'], 'not-uuid'), headers=headers).status_code == 422
-    for _ in range(2):
-        assert client.post(path, headers=headers).status_code == 204
-    assert service.status()['queued'] == 0
-    db.close()
-    db = Database(tmp_path / 'ack.sqlite3')
-    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (first,)).fetchone()[0] == 0
-    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (second,)).fetchone()[0] == 0
-    db.close()
-
-
 def test_sms_ack_api_stops_all_devices_only_for_requested_sms(settings, tmp_path):
     path = tmp_path / 'global-ack.sqlite3'
     db = Database(path)
@@ -429,6 +403,9 @@ def test_sms_ack_api_stops_all_devices_only_for_requested_sms(settings, tmp_path
     assert service.status()['queued'] == 4
     db.replace_token(hash_token('global-test'), 'now')
     client = TestClient(create_app(db, EventBus(), {'apns': service}))
+    old_path = f'/api/v1/push/devices/{uuid.uuid4()}/notifications/{uuid.uuid4()}/ack'
+    assert client.post(old_path).status_code == 404
+    assert '/api/v1/push/devices/{installation_id}/notifications/{notification_id}/ack' not in client.get('/openapi.json').json()['paths']
     endpoint = '/api/v1/sms/sms-one/ack'
     assert client.post(endpoint).status_code == 401
     assert service.status()['queued'] == 4
