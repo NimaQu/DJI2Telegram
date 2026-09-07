@@ -131,7 +131,7 @@ def test_outbox_persistence_scope_and_atomic_rollback(settings, tmp_path):
 
 
 def test_payload_utf8_limit():
-    job = {'sms_id': 'sms-' + 'a'*64, 'sender': '+1234', 'timestamp': 'now', 'body': '汉字😀' * 4000}
+    job = {'id': 'job-test', 'installation_id': 'installation-test', 'sms_id': 'sms-' + 'a'*64, 'sender': '+1234', 'timestamp': 'now', 'body': '汉字😀' * 4000}
     encoded = notification_payload(job)
     assert len(encoded) <= 4096
     decoded = json.loads(encoded)
@@ -165,6 +165,10 @@ async def test_request_jwt_and_success(settings, sandbox):
     service._jwt_at -= 3100
     service.clock = lambda: time.time() + 1
     assert service.provider_token() != token
+    assert service.status()['queued'] == 1
+    payload = json.loads(request.content)
+    assert payload['notification_id'] == request.headers['apns-id']
+    database.acknowledge_push_job(payload['installation_id'], payload['notification_id'])
     assert service.status()['queued'] == 0
     await service.stop()
 
@@ -273,9 +277,12 @@ async def test_worker_lifecycle_recovers_persisted_jobs(settings):
     sms(database)
     await service.start()
     for _ in range(100):
-        if service.status()['queued'] == 0:
+        row = database.connection.execute('SELECT * FROM push_jobs').fetchone()
+        if row['attempts'] == 1:
             break
         await asyncio.sleep(.01)
+    assert row['attempts'] == 1 and service.status()['queued'] == 1
+    database.acknowledge_push_job(row['installation_id'], row['id'])
     assert service.status()['queued'] == 0
     await service.stop()
     assert service.task is None and service.client.is_closed
@@ -300,12 +307,12 @@ def test_telegram_sms_switch_preserves_other_callbacks(tmp_path, monkeypatch):
 
 
 def test_mutable_content_is_inside_aps_and_included_in_size_budget():
-    payload = json.loads(notification_payload({'sms_id': 'sms-test', 'sender': '+123',
+    payload = json.loads(notification_payload({'id': 'job-test', 'installation_id': 'installation-test', 'sms_id': 'sms-test', 'sender': '+123',
         'timestamp': '2026-01-01T06:30:00+00:00', 'body': 'test'}))
     assert payload['aps']['mutable-content'] == 1
     assert 'mutable-content' not in {k: v for k, v in payload.items() if k != 'aps'}
     assert payload['timestamp'] == '2026-01-01T06:30:00+00:00'
-    payload_bytes = notification_payload({'sms_id': 'sms-test', 'sender': '+123',
+    payload_bytes = notification_payload({'id': 'job-test', 'installation_id': 'installation-test', 'sms_id': 'sms-test', 'sender': '+123',
         'timestamp': '2026-01-01T06:30:00+00:00', 'body': '中文😀' * 4000})
     assert len(payload_bytes) <= 4096
     assert json.loads(payload_bytes)['aps']['mutable-content'] == 1
@@ -333,4 +340,79 @@ def test_old_sms_utc_migration_is_idempotent_and_preserves_queue(tmp_path):
     db = Database(path)
     assert db.get_sms('old')['timestamp'] == '2026-01-01T06:30:00+00:00'
     assert db.connection.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0] == 1
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_ack_timeout_resends_stable_id_and_stops_after_ack(settings):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200)
+    database, service, installation = setup_service(settings, handler)
+    sms(database)
+    now = time.time()
+    service.clock = lambda: now
+    await service.send_one()
+    row = database.connection.execute('SELECT * FROM push_jobs').fetchone()
+    assert now + 60 <= row['next_attempt'] <= now + 61
+    assert not await service.send_one()
+    now = row['next_attempt']
+    await service.send_one()
+    row = database.connection.execute('SELECT * FROM push_jobs').fetchone()
+    assert now + 120 <= row['next_attempt'] <= now + 121
+    assert requests[0].content == requests[1].content
+    assert requests[0].headers['apns-id'] == requests[1].headers['apns-id']
+    database.acknowledge_push_job(installation, row['id'])
+    now += 3600
+    assert not await service.send_one()
+    assert database.get_sms('sms-test')['is_read'] == 0
+    await service.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome', [200, 500, 'timeout'])
+async def test_ack_during_inflight_request_cannot_resurrect_job(settings, outcome):
+    started, release = asyncio.Event(), asyncio.Event()
+    async def handler(request):
+        started.set()
+        await release.wait()
+        if outcome == 'timeout':
+            raise httpx.ReadTimeout('timeout', request=request)
+        return httpx.Response(outcome)
+    database, service, installation = setup_service(settings, handler)
+    sms(database)
+    task = asyncio.create_task(service.send_one())
+    await started.wait()
+    row = database.connection.execute('SELECT * FROM push_jobs').fetchone()
+    database.acknowledge_push_job(installation, row['id'])
+    release.set()
+    await task
+    assert service.status()['queued'] == 0
+    await service.stop()
+
+
+def test_ack_api_auth_idempotency_device_scope_and_validation(settings, tmp_path):
+    db = Database(tmp_path / 'ack.sqlite3')
+    service = APNsService(settings, db)
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    service.register(first, 'aa')
+    service.register(second, 'bb')
+    sms(db)
+    job = db.connection.execute('SELECT * FROM push_jobs WHERE installation_id=?', (first,)).fetchone()
+    db.replace_token(hash_token('ack-test'), 'now')
+    client = TestClient(create_app(db, EventBus(), {'apns': service}))
+    path = f"/api/v1/push/devices/{first}/notifications/{job['id']}/ack"
+    headers = {'Authorization': 'Bearer ack-test'}
+    assert client.post(path).status_code == 401
+    assert client.post(path.replace(first, second), headers=headers).status_code == 204
+    assert service.status()['queued'] == 2
+    assert client.post(path.replace(job['id'], 'not-uuid'), headers=headers).status_code == 422
+    for _ in range(2):
+        assert client.post(path, headers=headers).status_code == 204
+    assert service.status()['queued'] == 1
+    db.close()
+    db = Database(tmp_path / 'ack.sqlite3')
+    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (first,)).fetchone()[0] == 0
+    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (second,)).fetchone()[0] == 1
     db.close()

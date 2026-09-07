@@ -322,6 +322,17 @@ class Database:
                 WHERE j.next_attempt<=? ORDER BY j.next_attempt LIMIT 1""", (now,)
             ).fetchone()
 
+    def acknowledge_push_job(self, installation_id: str, notification_id: str) -> None:
+        """Idempotent receipt confirmation, scoped to one installation and job.
+
+        Unknown/expired/already ACKed jobs are a no-op; never affect read status.
+        """
+        with self._lock, self.connection:
+            self.connection.execute(
+                "DELETE FROM push_jobs WHERE id=? AND installation_id=?",
+                (notification_id, installation_id),
+            )
+
     def finish_push_job(self, job_id: str) -> None:
         with self._lock, self.connection:
             self.connection.execute("DELETE FROM push_jobs WHERE id=?", (job_id,))

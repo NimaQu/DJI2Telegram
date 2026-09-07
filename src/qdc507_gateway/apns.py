@@ -20,6 +20,7 @@ def notification_payload(job) -> bytes:
     payload = {
         "aps": {"alert": {"title": job["sender"][:256], "body": body}, "sound": "default", "mutable-content": 1},
         "type": "sms.received", "sms_id": job["sms_id"],
+        "notification_id": job["id"], "installation_id": job["installation_id"],
         "timestamp": job["timestamp"], "body_truncated": False,
     }
 
@@ -102,9 +103,10 @@ class APNsService:
         self.last_error = reason
         logger.warning("APNs delivery: %s", reason)
 
-    def retry(self, job, response=None):
+    def retry(self, job, response=None, *, awaiting_ack=False):
         now = self.clock()
-        delay = min(3600, 2 ** min(job["attempts"] + 1, 12)) + random.uniform(0, 1)
+        base = 60 if awaiting_ack else 2
+        delay = min(3600, base * 2 ** min(job["attempts"], 12)) + random.uniform(0, 1)
         if response is not None:
             value = response.headers.get("retry-after")
             if value:
@@ -141,7 +143,9 @@ class APNsService:
             self.retry(job)
             return True
         if response.status_code == 200:
-            self.database.finish_push_job(job["id"])
+            # Apple acceptance is not device receipt. UPDATE cannot resurrect a
+            # job ACKed/deleted while the HTTP request was in flight.
+            self.retry(job, awaiting_ack=True)
             self.last_error = None
             return True
         try:

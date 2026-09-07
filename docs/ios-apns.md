@@ -106,6 +106,22 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
 
 不存在返回 404；读取不会自动标记已读，也不返回原始 PDU。
 
+## 客户端 ACK（必需）
+
+APNs 返回 200 后，bridge 继续保留任务，直到客户端 ACK。App 或 Notification Service Extension 应先可靠保存短信（正文截断时可先获取完整短信），然后使用 payload 中的两个 ID 确认：
+
+```sh
+curl --fail-with-body -X POST \
+  -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
+  "https://djihub.fubuki.app/api/v1/push/devices/$INSTALLATION_ID/notifications/$NOTIFICATION_ID/ack"
+```
+
+不需要请求正文。成功返回 204；重复确认、已过期或已删除任务同样返回 204。无效 UUID 返回 422，缺少或错误 Bearer token 按现有规则返回 401/429。ACK 仅删除与 installation ID 和 notification ID 同时匹配的任务，不影响其他设备，也不将短信标为已读。系统沿用单一管理员 Bearer token，installation ID 本身不是身份凭据。
+
+`notification_id` 标识该设备的一次短信投递任务，同一任务重发保持不变；`sms_id` 标识短信，用于本地内容去重。收到重复通知时仍需再次 ACK（之前的 ACK 可能没有到达服务器）。ACK 请求失败时客户端应保存待确认记录，并在后续获得网络执行机会时重试。重发和 ACK 并发时，已经在途或交给 Apple 的通知仍可能到达。
+
+**兼容性变化：旧 App 若不发送 ACK，将重复收到通知直到任务过期。** 本次升级只改变仍在队列中的任务和新任务，之前已按 APNs 200 删除的任务不会补建。
+
 ## APNs 通知格式
 
 ```json
@@ -117,6 +133,8 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
   },
   "type": "sms.received",
   "sms_id": "sms-<sha256>",
+  "notification_id": "877d6f83-bf98-43e9-9ed1-9fb8a20a907d",
+  "installation_id": "56862d57-3a92-44c4-ab23-a864bc4b06cf",
   "timestamp": "2026-09-05T12:00:00+00:00",
   "body_truncated": false
 }
@@ -128,9 +146,11 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
 
 按实际 UTF-8 JSON 字节数限制在 4096 字节内；超长正文以省略号截断并设置 `body_truncated=true`。完整正文保留在 bridge。App 应以 `sms_id` 识别同一短信，并在用户打开 App 时通过 API 同步短信；APNs 不是可靠的完整短信存储。
 
+状态中的 `queued` 包括等待客户端 ACK 和等待再次发送的任务。
+
 后台通过持久化队列发送，不阻塞短信接收。只有完整拼接、去重后的入站短信会创建任务；发送短信不会触发入站通知。每个任务使用稳定 `apns-id`，同一短信使用稳定 `apns-collapse-id`。网络超时后重试仍可能出现重复，APNs 的 200 只表示 Apple 接受了请求。
 
-网络错误、429、5xx 按指数退避和抖动重试，并尊重 `Retry-After`；24 小时后过期。重启恢复未完成任务。410 按失效时间和注册版本处理，旧请求不会撤销新的 token 注册。`BadDeviceToken` / `DeviceTokenNotForTopic` 停用对应注册；凭据或 topic 配置错误暂停 worker，修复配置并重启后恢复。其他不可重试请求错误结束该任务并记录脱敏错误。
+APNs 200 后等待 ACK：初始等待约 60 秒，后续按发送尝试次数指数增长（连续成功提交但无 ACK 时为 60、120、240 秒……），最高约 1 小时，额外增加 0–1 秒抖动。收到 ACK 才完成任务。网络错误、429、5xx 仍从约 2 秒起指数退避，并尊重 `Retry-After`；两种情况共用尝试次数。任务从创建起 24 小时后过期。重启恢复未完成任务。410 按失效时间和注册版本处理，旧请求不会撤销新的 token 注册。`BadDeviceToken` / `DeviceTokenNotForTopic` 停用对应注册；凭据或 topic 配置错误暂停 worker，修复配置并重启后恢复。其他不可重试请求错误结束该任务并记录脱敏错误。
 
 ## 状态与验收
 
