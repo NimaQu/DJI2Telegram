@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+SMS_RETENTION_LIMIT = 100
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
   name TEXT PRIMARY KEY
@@ -101,6 +104,8 @@ class Database:
                 ) from exc
 
         self._migrate_sms_utc()
+        with self._lock, self.connection:
+            self._prune_sms()
 
     def _migrate_sms_utc(self) -> None:
         """Repair the former local-time-as-UTC bug from preserved source PDUs once.
@@ -198,6 +203,18 @@ class Database:
                         (str(uuid.uuid4()), message["id"], device["installation_id"], device["version"], now, now),
                     )
 
+            self._prune_sms()
+
+    def _prune_sms(self) -> None:
+        """Caller holds the lock and transaction; retain newest timestamps first."""
+        self.connection.execute(
+            "DELETE FROM sms_messages WHERE id IN (SELECT id FROM sms_messages ORDER BY timestamp DESC, rowid DESC LIMIT -1 OFFSET ?)",
+            (SMS_RETENTION_LIMIT,),
+        )
+        self.connection.execute(
+            "DELETE FROM push_jobs WHERE NOT EXISTS (SELECT 1 FROM sms_messages s WHERE s.id=push_jobs.sms_id)"
+        )
+
     def record_sms_pdu(
         self,
         pdu_hash: str,
@@ -225,7 +242,7 @@ class Database:
         if unread is not None:
             query += " WHERE is_read = ?"
             params.append(int(unread))
-        query += " ORDER BY timestamp DESC LIMIT ?"
+        query += " ORDER BY timestamp DESC, rowid DESC LIMIT ?"
         params.append(max(1, min(limit, 500)))
         with self._lock:
             return list(self.connection.execute(query, params))
