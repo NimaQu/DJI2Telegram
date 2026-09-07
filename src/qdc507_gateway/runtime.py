@@ -5,7 +5,6 @@ from typing import Any
 
 from qdc507_gateway.events import EventBus
 from qdc507_gateway.models import GatewayEvent, USBProbeReport
-from qdc507_gateway.storage.database import Database
 from qdc507_gateway.usb.descriptors import DeviceLocator
 
 
@@ -17,26 +16,16 @@ class GatewayRuntime:
     service startup side effect.
     """
 
-    def __init__(self, locator: DeviceLocator, database: Database, events: EventBus, state: dict[str, Any]):
+    def __init__(self, locator: DeviceLocator, events: EventBus, state: dict[str, Any]):
         self.locator = locator
-        self.database = database
         self.events = events
         self.state = state
-        self.running = False
         self._probe_lock = asyncio.Lock()
 
-    async def start(self) -> None:
-        self.running = True
-        await self.probe_once(reason="startup")
-
     async def stop(self) -> None:
-        self.running = False
         closer = getattr(self.locator, "close", None)
         if callable(closer):
             await asyncio.to_thread(closer)
-
-    async def reconnect(self) -> dict[str, Any]:
-        return await self.probe_once(reason="reconnect")
 
     async def probe_once(self, reason: str = "probe") -> dict[str, Any]:
         async with self._probe_lock:

@@ -5,7 +5,6 @@ import asyncio
 from qdc507_gateway.events import EventBus
 from qdc507_gateway.models import EndpointDescriptor, InterfaceDescriptor, USBDeviceSnapshot
 from qdc507_gateway.runtime import GatewayRuntime
-from qdc507_gateway.storage.database import Database
 
 
 def test_runtime_probe_updates_state_and_publishes_without_claiming_usb():
@@ -22,7 +21,7 @@ def test_runtime_probe_updates_state_and_publishes_without_claiming_usb():
 
     async def run():
         events = EventBus()
-        runtime = GatewayRuntime(Locator(), Database(":memory:"), events, {"status": {}})
+        runtime = GatewayRuntime(Locator(), events, {"status": {}})
         result = await runtime.probe_once()
         assert result["found"]
         assert runtime.state["module"]["identity"] == "2C7C:0125"
@@ -43,7 +42,7 @@ def test_runtime_stop_closes_locator_context():
 
     async def run():
         locator = Locator()
-        runtime = GatewayRuntime(locator, Database(":memory:"), EventBus(), {"status": {}})
+        runtime = GatewayRuntime(locator, EventBus(), {"status": {}})
         await runtime.stop()
         assert locator.closed
 

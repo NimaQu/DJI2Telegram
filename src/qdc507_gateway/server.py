@@ -5,7 +5,7 @@ import json
 import logging
 import signal
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional, Sequence
 
 from qdc507_gateway import __version__
@@ -88,7 +88,7 @@ def build_app(settings: Optional[Settings] = None):
         locator=locator,
         state=state,
     )
-    runtime = GatewayRuntime(locator, database, events, state)
+    runtime = GatewayRuntime(locator, events, state)
     call_coordinator = CallCoordinator()
     module_voice_runtime = None
     if settings.module_voice_manifest is not None:
@@ -333,22 +333,17 @@ def build_app(settings: Optional[Settings] = None):
     async def reconnect_module():
         await web_audio_diagnostic.stop()
         await hangup_active(reason="module reconnect")
-        callbacks = (
-            incoming_cellular_call,
-            cellular_disconnected,
-            cellular_connected,
-        )
         was_monitoring = module_service.monitoring
         if was_monitoring:
             await module_service.stop_monitor()
         try:
-            return await runtime.reconnect()
+            return await runtime.probe_once(reason="reconnect")
         finally:
             if was_monitoring:
                 await module_service.start_monitor(
-                    on_incoming_call=callbacks[0],
-                    on_call_disconnected=callbacks[1],
-                    on_cellular_connected=callbacks[2],
+                    on_incoming_call=incoming_cellular_call,
+                    on_call_disconnected=cellular_disconnected,
+                    on_cellular_connected=cellular_connected,
                 )
 
     state["reconnect"] = reconnect_module
@@ -469,7 +464,7 @@ def build_app(settings: Optional[Settings] = None):
         call_status_task = None
         try:
             await apns_service.start()
-            await runtime.start()
+            await runtime.probe_once(reason="startup")
             await telegram_service.start()
             await module_service.start_monitor(
                 on_incoming_call=incoming_cellular_call,
@@ -495,28 +490,17 @@ def build_app(settings: Optional[Settings] = None):
             if network_status_task is not None:
                 network_status_task.cancel()
                 await asyncio.gather(network_status_task, return_exceptions=True)
-            try:
-                await web_audio_diagnostic.stop()
-            finally:
-                try:
-                    await hangup_active(reason="service shutdown")
-                finally:
-                    try:
-                        await module_service.stop_monitor()
-                    finally:
-                        try:
-                            module_service.close()
-                        finally:
-                            try:
-                                await telegram_service.stop()
-                            finally:
-                                try:
-                                    await runtime.stop()
-                                finally:
-                                    try:
-                                        await apns_service.stop()
-                                    finally:
-                                        database.close()
+            # Registered in reverse shutdown order; every cleanup runs even
+            # when an earlier one raises, just like nested finally blocks.
+            async with AsyncExitStack() as cleanup:
+                cleanup.callback(database.close)
+                cleanup.push_async_callback(apns_service.stop)
+                cleanup.push_async_callback(runtime.stop)
+                cleanup.push_async_callback(telegram_service.stop)
+                cleanup.callback(module_service.close)
+                cleanup.push_async_callback(module_service.stop_monitor)
+                cleanup.push_async_callback(hangup_active, reason="service shutdown")
+                cleanup.push_async_callback(web_audio_diagnostic.stop)
 
     app = create_app(database, events, state, lifespan=lifespan)
     app.state.gateway_database = database
