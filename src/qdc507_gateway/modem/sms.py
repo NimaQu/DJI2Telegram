@@ -116,7 +116,7 @@ class SMSIngress:
             "id": "sms-" + hashlib.sha256(message_part.raw_pdu.encode("ascii")).hexdigest(),
             "sender": message_part.sender,
             "body": message_part.body,
-            "timestamp": (message_part.timestamp or self.clock()).isoformat(),
+            "timestamp": (message_part.timestamp or self.clock()).astimezone(dt.timezone.utc).isoformat(),
             "is_read": False,
             "raw_pdus": json.dumps(raw_pdus),
         }
@@ -313,13 +313,21 @@ def _decode_gsm7(data: bytes, septets: int, bit_offset: int = 0) -> str:
 def _decode_timestamp(data: bytes) -> Optional[dt.datetime]:
     if len(data) != 7:
         return None
-    values = []
-    for byte in data[:6]:
-        values.append(int("%x%x" % (byte & 0x0F, (byte >> 4) & 0x0F)))
-    year, month, day, hour, minute, second = values
-    year += 2000 if year < 70 else 1900
+    # TS 23.040 TP-SCTS: swapped BCD local time, followed by a signed
+    # quarter-hour UTC offset. Bit 3 of the timezone octet is the sign.
+    def bcd(byte: int) -> int:
+        tens, units = byte & 0x0F, byte >> 4
+        if tens > 9 or units > 9:
+            raise ValueError("invalid timestamp BCD")
+        return tens * 10 + units
+
     try:
-        return dt.datetime(year, month, day, hour, minute, second, tzinfo=dt.timezone.utc)
+        year, month, day, hour, minute, second = [bcd(byte) for byte in data[:6]]
+        year += 2000 if year < 70 else 1900
+        quarters = bcd(data[6] & ~0x08)
+        offset = dt.timedelta(minutes=quarters * (-15 if data[6] & 0x08 else 15))
+        local = dt.datetime(year, month, day, hour, minute, second, tzinfo=dt.timezone(offset))
+        return local.astimezone(dt.timezone.utc)
     except ValueError:
         return None
 

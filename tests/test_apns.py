@@ -297,3 +297,40 @@ def test_telegram_sms_switch_preserves_other_callbacks(tmp_path, monkeypatch):
         assert services[-1].send_sms_callback == module.send_sms
         module.close()
         app.state.gateway_database.close()
+
+
+def test_mutable_content_is_inside_aps_and_included_in_size_budget():
+    payload = json.loads(notification_payload({'sms_id': 'sms-test', 'sender': '+123',
+        'timestamp': '2026-01-01T06:30:00+00:00', 'body': 'test'}))
+    assert payload['aps']['mutable-content'] == 1
+    assert 'mutable-content' not in {k: v for k, v in payload.items() if k != 'aps'}
+    assert payload['timestamp'] == '2026-01-01T06:30:00+00:00'
+    payload_bytes = notification_payload({'sms_id': 'sms-test', 'sender': '+123',
+        'timestamp': '2026-01-01T06:30:00+00:00', 'body': '中文😀' * 4000})
+    assert len(payload_bytes) <= 4096
+    assert json.loads(payload_bytes)['aps']['mutable-content'] == 1
+
+
+def test_old_sms_utc_migration_is_idempotent_and_preserves_queue(tmp_path):
+    import sqlite3
+    path = tmp_path / 'old.sqlite3'
+    # Minimal pre-migration database; no schema_migrations marker exists yet.
+    c = sqlite3.connect(path)
+    c.execute('CREATE TABLE sms_messages(id TEXT PRIMARY KEY,sender TEXT,body TEXT,timestamp TEXT,is_read INTEGER,raw_pdus TEXT)')
+    pdu = '00040D91683108108300F000086210101003000A046D4B8BD5'
+    c.execute('INSERT INTO sms_messages VALUES (?,?,?,?,?,?)',
+              ('old', '+123', '测试', '2026-01-01T01:30:00+00:00', 0, json.dumps([pdu])))
+    c.execute('INSERT INTO sms_messages VALUES (?,?,?,?,?,?)',
+              ('fallback', '+123', 'test', '2026-01-01T01:30:00+00:00', 1, 'invalid-json'))
+    c.commit()
+    c.close()
+    db = Database(path)
+    assert db.get_sms('old')['timestamp'] == '2026-01-01T06:30:00+00:00'
+    assert db.get_sms('fallback')['timestamp'] == '2026-01-01T01:30:00+00:00'
+    assert db.get_sms('fallback')['is_read'] == 1
+    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs').fetchone()[0] == 0
+    db.close()
+    db = Database(path)
+    assert db.get_sms('old')['timestamp'] == '2026-01-01T06:30:00+00:00'
+    assert db.connection.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0] == 1
+    db.close()

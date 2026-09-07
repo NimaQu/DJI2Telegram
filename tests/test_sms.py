@@ -122,3 +122,31 @@ def test_sms_ingress_deduplicates_pdu_and_persists_message():
     assert ingress.ingest(pdu) is None
     assert len(database.list_sms()) == 1
     assert database.connection.execute("SELECT COUNT(*) FROM sms_pdu_dedup").fetchone()[0] == 1
+
+
+def test_scts_signed_quarter_hour_offsets_are_converted_to_utc():
+    from qdc507_gateway.modem.sms import _decode_timestamp
+    # 2026-01-01 01:30:00 local, UTC+08:00 -> previous UTC date/year.
+    assert _decode_timestamp(bytes.fromhex('62101010030023')).isoformat() == '2025-12-31T17:30:00+00:00'
+    # UTC-05:00 = -20 quarters; sign lives in bit 3 (0x08), not bit 7.
+    assert _decode_timestamp(bytes.fromhex('6210101003000A')).isoformat() == '2026-01-01T06:30:00+00:00'
+    # UTC+05:45 = 23 quarters; zero zone leaves the wall clock unchanged.
+    assert _decode_timestamp(bytes.fromhex('62101010030032')).isoformat() == '2025-12-31T19:45:00+00:00'
+    assert _decode_timestamp(bytes.fromhex('62101010030000')).isoformat() == '2026-01-01T01:30:00+00:00'
+    assert _decode_timestamp(bytes.fromhex('6210103223000A')).isoformat() == '2026-01-02T04:32:00+00:00'
+    for invalid in ('', '62F01010030000', '62131010030000', '621010100300F0'):
+        assert _decode_timestamp(bytes.fromhex(invalid)) is None
+
+
+def test_ingress_persists_actual_utc_and_invalid_time_uses_clock():
+    database = Database(':memory:')
+    def clock():
+        return dt.datetime(2026, 1, 1, 12, tzinfo=dt.timezone(dt.timedelta(hours=8)))
+    ingress = SMSIngress(database, clock=clock)
+    prefix = '00040D91683108108300F00008'
+    suffix = '046D4B8BD5'
+    message = ingress.ingest(prefix + '6210101003000A' + suffix)
+    assert message['timestamp'] == '2026-01-01T06:30:00+00:00'
+    assert database.get_sms(message['id'])['timestamp'] == message['timestamp']
+    fallback = ingress.ingest(prefix + '62F0101003000A' + suffix)
+    assert fallback['timestamp'] == '2026-01-01T04:00:00+00:00'

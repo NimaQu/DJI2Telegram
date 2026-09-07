@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def notification_payload(job) -> bytes:
     body = job["body"]
     payload = {
-        "aps": {"alert": {"title": job["sender"][:256], "body": body}, "sound": "default"},
+        "aps": {"alert": {"title": job["sender"][:256], "body": body}, "sound": "default", "mutable-content": 1},
         "type": "sms.received", "sms_id": job["sms_id"],
         "timestamp": job["timestamp"], "body_truncated": False,
     }

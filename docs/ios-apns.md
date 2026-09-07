@@ -112,7 +112,8 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
 {
   "aps": {
     "alert": {"title": "+123456789", "body": "您的验证码是 123456"},
-    "sound": "default"
+    "sound": "default",
+    "mutable-content": 1
   },
   "type": "sms.received",
   "sms_id": "sms-<sha256>",
@@ -120,6 +121,10 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
   "body_truncated": false
 }
 ```
+
+`aps.mutable-content=1` 配合 alert 通知触发 App 的 `UNNotificationServiceExtension`；iOS 工程需要包含该扩展，它不是通用的后台唤醒开关。
+
+短信 `timestamp` 统一使用 UTC ISO 8601（`+00:00`，与 `Z` 等价），按短信中心 PDU 的当地时间与偏移换算，App 可在展示时转换到设备时区。升级时从原始 PDU 一次性修正旧记录，不重新推送；无有效原始时间的记录保留已有接收时间。
 
 按实际 UTF-8 JSON 字节数限制在 4096 字节内；超长正文以省略号截断并设置 `body_truncated=true`。完整正文保留在 bridge。App 应以 `sms_id` 识别同一短信，并在用户打开 App 时通过 API 同步短信；APNs 不是可靠的完整短信存储。
 

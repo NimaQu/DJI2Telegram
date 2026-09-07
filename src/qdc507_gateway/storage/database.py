@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 import threading
 import time
 import uuid
@@ -11,6 +12,9 @@ from typing import Any, Dict, List, Optional
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS push_devices (
   installation_id TEXT PRIMARY KEY,
   device_token TEXT NOT NULL,
@@ -95,6 +99,40 @@ class Database:
                 raise PermissionError(
                     "SQLite database permissions could not be restricted to 0600"
                 ) from exc
+
+        self._migrate_sms_utc()
+
+    def _migrate_sms_utc(self) -> None:
+        """Repair the former local-time-as-UTC bug from preserved source PDUs once.
+
+        Updates timestamps only: never reingest PDUs or enqueue notifications.
+        Rows without a valid source timestamp retain their existing fallback time.
+        """
+        from qdc507_gateway.modem.sms import SMSPDUError, decode_deliver
+
+        name = "sms_scts_utc_v1"
+        with self._lock, self.connection:
+            if self.connection.execute("SELECT 1 FROM schema_migrations WHERE name=?", (name,)).fetchone():
+                return
+            for row in self.connection.execute("SELECT id,raw_pdus FROM sms_messages").fetchall():
+                try:
+                    pdus = json.loads(row["raw_pdus"])
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(pdus, list):
+                    continue
+                for pdu in pdus:
+                    if not isinstance(pdu, str):
+                        continue
+                    try:
+                        timestamp = decode_deliver(pdu).timestamp
+                    except (SMSPDUError, ValueError):
+                        continue
+                    if timestamp is not None:
+                        self.connection.execute("UPDATE sms_messages SET timestamp=? WHERE id=?",
+                                                (timestamp.isoformat(), row["id"]))
+                        break
+            self.connection.execute("INSERT INTO schema_migrations(name) VALUES (?)", (name,))
 
     def close(self) -> None:
         self.connection.close()
