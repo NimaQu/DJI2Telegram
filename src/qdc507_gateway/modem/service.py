@@ -226,6 +226,74 @@ def parse_csq_signal(lines: list[str] | tuple[str, ...]) -> dict[str, Any]:
     }
 
 
+def parse_serving_cell(lines: list[str] | tuple[str, ...]) -> dict[str, Any]:
+    """Decode the 18-field LTE layout verified on QDC507GLEFM21."""
+    result: dict[str, Any] = {
+        "available": False,
+        "source": 'AT+QENG="servingcell"',
+        "measured_at": _timestamp(),
+        "raw": list(lines),
+        "state": None,
+        "radio": None,
+        "rsrp_dbm": None,
+        "rsrq_db": None,
+        "rssi_dbm": None,
+        "sinr_raw": None,
+        "sinr_db": None,
+        "cell": None,
+    }
+    for line in lines:
+        fields = _csv_payload(line, "+QENG:")
+        if not fields or fields[0].lower() != "servingcell":
+            continue
+        if len(fields) < 2:
+            break
+        result["state"] = fields[1]
+        if len(fields) == 2 and fields[1].upper() in {"SEARCH", "LIMSRV"}:
+            return result
+        result["radio"] = fields[2] if len(fields) > 2 else None
+        if len(fields) != 18 or fields[2].upper() != "LTE":
+            result["error"] = "unsupported_format"
+            return result
+
+        def number(index: int) -> int | None:
+            value = fields[index].strip()
+            if value in {"", "-"}:
+                return None
+            return int(value)
+
+        try:
+            result.update({
+                "rsrp_dbm": number(13),
+                "rsrq_db": number(14),
+                "rssi_dbm": number(15),
+                # QDC507GLEFM21 QENG reports dB directly; QCSQ uses another encoding.
+                "sinr_raw": number(16),
+                "sinr_db": number(16),
+                "cell": {
+                    "duplex": fields[3],
+                    "mcc": fields[4],
+                    "mnc": fields[5],
+                    "cell_id": fields[6],
+                    "pci": number(7),
+                    "earfcn": number(8),
+                    "band": number(9),
+                    "ul_bandwidth_raw": number(10),
+                    "dl_bandwidth_raw": number(11),
+                    "tac": fields[12],
+                },
+            })
+        except ValueError:
+            result["error"] = "invalid_response"
+            return result
+        result["available"] = any(
+            result[key] is not None for key in ("rsrp_dbm", "rsrq_db", "rssi_dbm", "sinr_raw")
+        )
+        return result
+    result["error"] = "invalid_response"
+    return result
+
+
 class LiveModuleService:
     """Explicit AT/SMS/ADB operations over one short-lived live USB lease."""
 
@@ -634,6 +702,7 @@ class LiveModuleService:
         module["identity"] = "2C7C:0125" if connected else None
         if not connected:
             module["signal"] = None
+            module["radio_metrics"] = None
         if error:
             module["error"] = error
         else:
@@ -988,7 +1057,7 @@ class LiveModuleService:
         return parse_cpas_call_status(response["lines"])
 
     async def network_status(self) -> dict[str, Any]:
-        """Read the SIM-provisioned number, selected operator and RSSI.
+        """Read the SIM number, operator, RSSI and optional LTE serving cell.
 
         CNUM is allowed to be empty: many operators do not provision the own
         number on the SIM.  Each field is reported independently so one
@@ -1029,6 +1098,18 @@ class LiveModuleService:
                     result["phone_number"] = parsed["phone_number"]
             except Exception as exc:
                 result["errors"][name] = type(exc).__name__
+        try:
+            response = await self.at('AT+QENG="servingcell"', timeout_ms=3000)
+            metrics = parse_serving_cell(response["lines"])
+            if not response["ok"]:
+                metrics["available"] = False
+                metrics["error"] = "query_rejected"
+        except Exception as exc:
+            metrics = parse_serving_cell([])
+            metrics["error"] = type(exc).__name__
+        result["radio_metrics"] = metrics
+        if metrics.get("error"):
+            result["errors"]["radio_metrics"] = metrics["error"]
         return result
 
     async def dial(self, number: str) -> dict[str, Any]:

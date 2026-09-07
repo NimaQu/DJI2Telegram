@@ -85,6 +85,7 @@ def test_module_status_can_be_refreshed_explicitly():
             "phone_number": "14312764514",
             "operator": {"name": "Lucky", "radio": "LTE"},
             "signal": {"dbm": -79, "bars": 5},
+            "radio_metrics": {"available": True, "rsrp_dbm": -102, "sinr_raw": 3},
         }
 
     state = {
@@ -98,6 +99,7 @@ def test_module_status_can_be_refreshed_explicitly():
     assert refreshed.status_code == 200
     assert refreshed.json()["phone_number"] == "14312764514"
     assert refreshed.json()["operator"]["name"] == "Lucky"
+    assert refreshed.json()["radio_metrics"]["rsrp_dbm"] == -102
 
 
 def test_repeated_token_failures_are_temporarily_blocked():

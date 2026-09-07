@@ -13,6 +13,7 @@ from qdc507_gateway.modem.service import (
     parse_cops_operator,
     parse_cpas_call_status,
     parse_csq_signal,
+    parse_serving_cell,
 )
 from qdc507_gateway.storage.database import Database
 
@@ -149,7 +150,9 @@ def test_network_status_returns_partial_results_for_unsupported_queries():
         assert status["phone_number"] == "14312764514"
         assert status["signal"]["dbm"] == -79
         assert status["operator"]["available"] is False
-        assert status["errors"] == {"operator": "ModuleServiceError"}
+        assert status["errors"] == {
+            "operator": "ModuleServiceError", "radio_metrics": "invalid_response",
+        }
 
     asyncio.run(run())
 
@@ -614,3 +617,92 @@ def test_monitor_callback_can_run_exclusive_cleanup_without_self_await():
         assert restarted == [True]
 
     asyncio.run(run())
+
+
+LTE_CELL = '+QENG: "servingcell","NOCONN","LTE","FDD",302,01,ABCD,276,2850,7,5,5,43,-102,-10,-71,3,25'
+
+
+def test_serving_cell_lte_preserves_identifiers_and_sinr_encoding():
+    result = parse_serving_cell([LTE_CELL])
+    assert result["available"]
+    assert (result["rsrp_dbm"], result["rsrq_db"], result["rssi_dbm"]) == (-102, -10, -71)
+    assert result["sinr_raw"] == 3
+    assert result["sinr_db"] == 3
+    assert result["cell"]["mnc"] == "01"
+    assert result["cell"]["cell_id"] == "ABCD"
+    assert result["cell"]["band"] == 7
+    assert result["cell"]["earfcn"] == 2850
+
+
+@pytest.mark.parametrize("line,error", [
+    ('+QENG: "servingcell","SEARCH"', None),
+    ('+QENG: "servingcell","LIMSRV"', None),
+    ('+QENG: "servingcell","NOCONN","WCDMA",1,2', "unsupported_format"),
+    (LTE_CELL + ",1", "unsupported_format"),
+    (LTE_CELL.replace("-102", "broken"), "invalid_response"),
+    ("OK", "invalid_response"),
+])
+def test_serving_cell_unavailable_and_unknown_formats(line, error):
+    result = parse_serving_cell([line])
+    assert not result["available"]
+    assert result.get("error") == error
+    assert result["raw"] == [line]
+
+
+def test_network_status_probes_serving_cell_independently_of_csq():
+    async def run():
+        service = LiveModuleService(Database(":memory:"), EventBus())
+        async def at(command, timeout_ms=3000):
+            return {"ok": command.startswith("AT+QENG"), "lines": [LTE_CELL]}
+        service.at = at
+        result = await service.network_status()
+        assert result["signal"] is None
+        assert result["radio_metrics"]["rsrp_dbm"] == -102
+        assert "radio_metrics" not in result["errors"]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["rejected", "timeout"])
+def test_extended_signal_failure_keeps_csq(failure):
+    async def run():
+        service = LiveModuleService(Database(":memory:"), EventBus())
+        async def at(command, timeout_ms=3000):
+            if command.startswith("AT+QENG"):
+                if failure == "timeout":
+                    raise TimeoutError("timeout")
+                return {"ok": False, "lines": ["ERROR"]}
+            return {"ok": True, "lines": ["+CSQ: 17,99"]}
+        service.at = at
+        result = await service.network_status()
+        assert result["signal"]["dbm"] == -79
+        assert not result["radio_metrics"]["available"]
+        assert result["errors"]["radio_metrics"] == (
+            "TimeoutError" if failure == "timeout" else "query_rejected"
+        )
+    asyncio.run(run())
+
+
+def test_disconnect_clears_extended_signal():
+    state = {"module": {"connected": True, "radio_metrics": {"rsrp_dbm": -80}}}
+    service = LiveModuleService(Database(":memory:"), EventBus(), state=state)
+    service._set_connection_state(False)
+    assert state["module"]["radio_metrics"] is None
+
+
+@pytest.mark.parametrize("sinr", [-6, -7, -9, -4])
+def test_qdc507_live_qeng_sinr_is_direct_db(sinr):
+    line = (
+        '+QENG: "servingcell","NOCONN","LTE","FDD",302,220,188E598,'
+        f'428,66935,66,5,5,2CEE,-122,-18,-83,{sinr},5'
+    )
+    result = parse_serving_cell([line])
+    assert result["sinr_raw"] == sinr
+    assert result["sinr_db"] == sinr
+    assert result["cell"]["band"] == 66
+
+
+def test_serving_cell_missing_sinr_stays_unknown():
+    result = parse_serving_cell([LTE_CELL.replace(",-71,3,25", ",-71,-,25")])
+    assert result["available"]
+    assert result["sinr_raw"] is None
+    assert result["sinr_db"] is None

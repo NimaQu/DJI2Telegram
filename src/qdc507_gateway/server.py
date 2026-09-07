@@ -384,6 +384,7 @@ def build_app(settings: Optional[Settings] = None):
             "subscriber": network["subscriber"],
             "operator": network["operator"],
             "signal": network["signal"] or previous.get("signal"),
+            "radio_metrics": network.get("radio_metrics"),
             "network_measured_at": network["measured_at"],
             "network_errors": network["errors"],
         }
