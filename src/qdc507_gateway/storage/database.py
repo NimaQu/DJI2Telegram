@@ -339,14 +339,16 @@ class Database:
                 WHERE j.next_attempt<=? ORDER BY j.next_attempt LIMIT 1""", (now,)
             ).fetchone()
 
-    def acknowledge_push_job(self, installation_id: str, notification_id: str) -> None:
-        """Idempotent receipt confirmation, scoped to one installation and job.
+    def acknowledge_sms(self, sms_id: str) -> None:
+        """Any authenticated client confirms delivery for all devices, not read status."""
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM push_jobs WHERE sms_id=?", (sms_id,))
 
-        Unknown/expired/already ACKed jobs are a no-op; never affect read status.
-        """
+    def acknowledge_push_job(self, installation_id: str, notification_id: str) -> None:
+        """Legacy endpoint: resolve a pending job, then confirm its SMS globally."""
         with self._lock, self.connection:
             self.connection.execute(
-                "DELETE FROM push_jobs WHERE id=? AND installation_id=?",
+                "DELETE FROM push_jobs WHERE sms_id IN (SELECT sms_id FROM push_jobs WHERE id=? AND installation_id=?)",
                 (notification_id, installation_id),
             )
 

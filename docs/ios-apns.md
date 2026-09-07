@@ -110,17 +110,19 @@ curl --fail-with-body -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
 
 ## 客户端 ACK（必需）
 
-APNs 返回 200 后，bridge 继续保留任务，直到客户端 ACK。App 或 Notification Service Extension 应先可靠保存短信（正文截断时可先获取完整短信），然后使用 payload 中的两个 ID 确认：
+APNs 返回 200 后，bridge 继续保留任务，直到任意客户端 ACK。App 或 Notification Service Extension 应先可靠保存短信（正文截断时可先获取完整短信），然后使用 payload 中的 `sms_id` 全局确认：
 
 ```sh
 curl --fail-with-body -X POST \
   -H "Authorization: Bearer $BRIDGE_API_TOKEN" \
-  "https://djihub.fubuki.app/api/v1/push/devices/$INSTALLATION_ID/notifications/$NOTIFICATION_ID/ack"
+  "https://djihub.fubuki.app/api/v1/sms/$SMS_ID/ack"
 ```
 
-不需要请求正文。成功返回 204；重复确认、已过期或已删除任务同样返回 204。无效 UUID 返回 422，缺少或错误 Bearer token 按现有规则返回 401/429。ACK 仅删除与 installation ID 和 notification ID 同时匹配的任务，不影响其他设备，也不将短信标为已读。系统沿用单一管理员 Bearer token，installation ID 本身不是身份凭据。
+不需要请求正文。成功返回 204；重复确认、未知短信、已过期或已删除任务同样返回 204。缺少或错误 Bearer token 按现有规则返回 401/429。任意客户端 ACK 后，删除该短信在所有设备上的待发送和重试任务；不影响其他短信，也不将短信标为已读。系统沿用单一管理员 Bearer token，ACK 不需要 installation ID 或 notification ID。
 
-`notification_id` 标识该设备的一次短信投递任务，同一任务重发保持不变；`sms_id` 标识短信，用于本地内容去重。收到重复通知时仍需再次 ACK（之前的 ACK 可能没有到达服务器）。ACK 请求失败时客户端应保存待确认记录，并在后续获得网络执行机会时重试。重发和 ACK 并发时，已经在途或交给 Apple 的通知仍可能到达。
+`sms_id` 用于全局 ACK 和本地内容去重。收到重复通知时仍需再次 ACK（之前的 ACK 可能没有到达服务器）。ACK 请求失败时客户端应保存待确认记录，并在后续获得网络执行机会时重试。重发和 ACK 并发时，已经在途或交给 Apple 的通知仍可能到达。
+
+payload 中的 `installation_id` 和 `notification_id` 为兼容旧 App 保留，新客户端无需使用它们确认。旧接口 `POST /api/v1/push/devices/{installation_id}/notifications/{notification_id}/ack` 已标记弃用：若仍能找到该待投递任务，也会确认整条短信、停止所有设备重试；旧任务已删除或过期时仅返回 204。
 
 **兼容性变化：旧 App 若不发送 ACK，将重复收到通知直到任务过期。** 本次升级只改变仍在队列中的任务和新任务，之前已按 APNs 200 删除的任务不会补建。
 

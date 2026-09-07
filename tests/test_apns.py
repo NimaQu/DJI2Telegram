@@ -385,14 +385,14 @@ async def test_ack_during_inflight_request_cannot_resurrect_job(settings, outcom
     task = asyncio.create_task(service.send_one())
     await started.wait()
     row = database.connection.execute('SELECT * FROM push_jobs').fetchone()
-    database.acknowledge_push_job(installation, row['id'])
+    database.acknowledge_sms(row['sms_id'])
     release.set()
     await task
     assert service.status()['queued'] == 0
     await service.stop()
 
 
-def test_ack_api_auth_idempotency_device_scope_and_validation(settings, tmp_path):
+def test_legacy_ack_api_resolves_device_job_but_confirms_globally(settings, tmp_path):
     db = Database(tmp_path / 'ack.sqlite3')
     service = APNsService(settings, db)
     first, second = str(uuid.uuid4()), str(uuid.uuid4())
@@ -410,9 +410,35 @@ def test_ack_api_auth_idempotency_device_scope_and_validation(settings, tmp_path
     assert client.post(path.replace(job['id'], 'not-uuid'), headers=headers).status_code == 422
     for _ in range(2):
         assert client.post(path, headers=headers).status_code == 204
-    assert service.status()['queued'] == 1
+    assert service.status()['queued'] == 0
     db.close()
     db = Database(tmp_path / 'ack.sqlite3')
     assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (first,)).fetchone()[0] == 0
-    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (second,)).fetchone()[0] == 1
+    assert db.connection.execute('SELECT COUNT(*) FROM push_jobs WHERE installation_id=?', (second,)).fetchone()[0] == 0
+    db.close()
+
+
+def test_sms_ack_api_stops_all_devices_only_for_requested_sms(settings, tmp_path):
+    path = tmp_path / 'global-ack.sqlite3'
+    db = Database(path)
+    service = APNsService(settings, db)
+    service.register(str(uuid.uuid4()), 'aa')
+    service.register(str(uuid.uuid4()), 'bb')
+    sms(db, 'sms-one')
+    sms(db, 'sms-two')
+    assert service.status()['queued'] == 4
+    db.replace_token(hash_token('global-test'), 'now')
+    client = TestClient(create_app(db, EventBus(), {'apns': service}))
+    endpoint = '/api/v1/sms/sms-one/ack'
+    assert client.post(endpoint).status_code == 401
+    assert service.status()['queued'] == 4
+    headers = {'Authorization': 'Bearer global-test'}
+    for url in (endpoint, endpoint, '/api/v1/sms/missing/ack'):
+        assert client.post(url, headers=headers).status_code == 204
+    assert service.status()['queued'] == 2
+    assert db.get_sms('sms-one')['is_read'] == 0
+    db.close()
+    db = Database(path)
+    assert db.connection.execute("SELECT COUNT(*) FROM push_jobs WHERE sms_id='sms-one'").fetchone()[0] == 0
+    assert db.connection.execute("SELECT COUNT(*) FROM push_jobs WHERE sms_id='sms-two'").fetchone()[0] == 2
     db.close()
