@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS push_devices (
   active INTEGER NOT NULL DEFAULT 1,
   UNIQUE(device_token, environment, bundle_id)
 );
+CREATE TABLE IF NOT EXISTS push_voip_devices (
+  installation_id TEXT PRIMARY KEY,
+  device_token TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  bundle_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  registered_at REAL NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(device_token, environment, bundle_id)
+);
 CREATE TABLE IF NOT EXISTS push_jobs (
   id TEXT PRIMARY KEY,
   sms_id TEXT NOT NULL,
@@ -103,6 +113,11 @@ class Database:
                     "SQLite database permissions could not be restricted to 0600"
                 ) from exc
 
+        with self.connection:
+            columns = {row[1] for row in self.connection.execute("PRAGMA table_info(call_records)")}
+            for column in ("owner_installation_id", "expires_at"):
+                if column not in columns:
+                    self.connection.execute(f"ALTER TABLE call_records ADD COLUMN {column} TEXT")
         self._migrate_sms_utc()
         with self._lock, self.connection:
             self._prune_sms()
@@ -262,12 +277,12 @@ class Database:
                 """
                 INSERT OR REPLACE INTO call_records(
                   id, direction, state, cellular_number, telegram_user_id, frontend,
-                  started_at, connected_at, ended_at, last_error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  started_at, connected_at, ended_at, last_error, owner_installation_id, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 tuple(scalar(values[key]) for key in (
                     "id", "direction", "state", "cellular_number", "telegram_user_id", "frontend",
-                    "started_at", "connected_at", "ended_at", "last_error",
+                    "started_at", "connected_at", "ended_at", "last_error", "owner_installation_id", "expires_at",
                 )),
             )
             self.connection.commit()
@@ -277,7 +292,7 @@ class Database:
             return list(self.connection.execute(
                 """
                 SELECT id, direction, state, cellular_number, telegram_user_id,
-                       frontend, started_at, connected_at, ended_at, last_error
+                       frontend, started_at, connected_at, ended_at, last_error, owner_installation_id, expires_at
                 FROM call_records
                 ORDER BY started_at DESC
                 LIMIT ?
@@ -320,6 +335,11 @@ class Database:
             )
 
     def delete_push_device(self, installation_id: str) -> None:
+        with self._lock, self.connection:
+            self.connection.execute("DELETE FROM push_voip_devices WHERE installation_id=?", (installation_id,))
+            self.delete_sms_push_device(installation_id)
+
+    def delete_sms_push_device(self, installation_id: str) -> None:
         with self._lock, self.connection:
             self.connection.execute("DELETE FROM push_jobs WHERE installation_id=?", (installation_id,))
             self.connection.execute("DELETE FROM push_devices WHERE installation_id=?", (installation_id,))
@@ -377,6 +397,7 @@ class Database:
 
     def reconcile_push_scope(self, environment: str, bundle_id: str) -> None:
         with self._lock, self.connection:
+            self.connection.execute("UPDATE push_voip_devices SET active=0 WHERE environment<>? OR bundle_id<>?", (environment, bundle_id))
             self.connection.execute(
                 "UPDATE push_devices SET active=0 WHERE environment<>? OR bundle_id<>?",
                 (environment, bundle_id),
@@ -384,4 +405,55 @@ class Database:
             self.connection.execute(
                 "DELETE FROM push_jobs WHERE created_at<=? OR NOT EXISTS (SELECT 1 FROM push_devices d WHERE d.installation_id=push_jobs.installation_id AND d.version=push_jobs.version AND d.active=1)",
                 (time.time() - 86400,),
+            )
+
+
+    def get_call(self, call_id: str):
+        with self._lock:
+            return self.connection.execute("SELECT * FROM call_records WHERE id=?", (call_id,)).fetchone()
+
+    def register_voip_device(self, installation_id, token, environment, bundle_id):
+        with self._lock, self.connection:
+            if token is None:
+                self.connection.execute("DELETE FROM push_voip_devices WHERE installation_id=?", (installation_id,))
+                return
+            self.connection.execute(
+                "DELETE FROM push_voip_devices WHERE device_token=? AND environment=? AND bundle_id=? AND installation_id<>?",
+                (token, environment, bundle_id, installation_id),
+            )
+            old = self.connection.execute("SELECT * FROM push_voip_devices WHERE installation_id=?", (installation_id,)).fetchone()
+            same = old is not None and old["active"] and (old["device_token"], old["environment"], old["bundle_id"]) == (token, environment, bundle_id)
+            self.connection.execute(
+                "INSERT OR REPLACE INTO push_voip_devices VALUES (?,?,?,?,?,?,1)",
+                (installation_id, token, environment, bundle_id, old["version"] if same else str(uuid.uuid4()), time.time()),
+            )
+
+    def voip_devices(self, environment, bundle_id):
+        with self._lock:
+            return [dict(row) for row in self.connection.execute(
+                "SELECT * FROM push_voip_devices WHERE active=1 AND environment=? AND bundle_id=?", (environment, bundle_id))]
+
+    def invalidate_voip_device(self, device, invalidated_at=None):
+        cutoff = device["registered_at"] if invalidated_at is None else invalidated_at
+        with self._lock, self.connection:
+            self.connection.execute(
+                "UPDATE push_voip_devices SET active=0 WHERE installation_id=? AND version=? AND registered_at<=?",
+                (device["installation_id"], device["version"], cutoff),
+            )
+
+    def registered_installation(self, installation_id, environment, bundle_id):
+        with self._lock:
+            for table in ("push_devices", "push_voip_devices"):
+                if self.connection.execute(f"SELECT 1 FROM {table} WHERE installation_id=? AND environment=? AND bundle_id=? AND active=1",
+                                           (installation_id, environment, bundle_id)).fetchone():
+                    return True
+            return False
+
+
+    def recover_client_calls(self):
+        from qdc507_gateway.models import utc_now
+        with self._lock, self.connection:
+            self.connection.execute(
+                "UPDATE call_records SET state='ended',ended_at=?,last_error='server restarted',expires_at=NULL WHERE frontend IN ('web','app') AND state NOT IN ('ended','failed')",
+                (utc_now().isoformat(),),
             )

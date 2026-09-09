@@ -13,6 +13,7 @@ import httpx
 import jwt
 
 logger = logging.getLogger(__name__)
+UNSET = object()
 
 
 def notification_payload(job) -> bytes:
@@ -67,8 +68,14 @@ class APNsService:
             **self.database.push_counts(self.environment, self.bundle_id),
         }
 
-    def register(self, installation_id, device_token):
-        self.database.register_push_device(installation_id, device_token, self.environment, self.bundle_id)
+    def register(self, installation_id, device_token=UNSET, voip_token=UNSET):
+        if device_token is not UNSET:
+            if device_token is None:
+                self.database.delete_sms_push_device(installation_id)
+            else:
+                self.database.register_push_device(installation_id, device_token, self.environment, self.bundle_id)
+        if voip_token is not UNSET:
+            self.database.register_voip_device(installation_id, voip_token, self.environment, self.bundle_id)
         return {"installation_id": installation_id, "environment": self.environment,
                 "enabled": self.settings.apns_enabled}
 

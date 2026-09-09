@@ -6,6 +6,7 @@ import logging
 import signal
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import asdict
 from typing import Optional, Sequence
 
 from qdc507_gateway import __version__
@@ -21,14 +22,16 @@ from qdc507_gateway.models import GatewayEvent
 from qdc507_gateway.runtime import GatewayRuntime
 from qdc507_gateway.security import AuthFailureLimiter
 from qdc507_gateway.storage.database import Database
-from qdc507_gateway.telegram.calls import CallBridgeOrchestrator, CallCoordinator
+from qdc507_gateway.telegram.calls import CallBridgeOrchestrator
+from qdc507_gateway.calls.core import CallCoordinator, CallBridgeError
+from qdc507_gateway.calls.voip import VoIPPushService
+from qdc507_gateway.calls.controller import ClientCallController
 from qdc507_gateway.telegram.service import KurigramTelegramService
 from qdc507_gateway.usb.descriptors import LibUSBDeviceLocator
 from qdc507_gateway.web.calls import (
     AudioTicketStore,
     WebAudioDiagnosticService,
     WebAudioSession,
-    WebCallController,
 )
 
 
@@ -54,6 +57,7 @@ def build_app(settings: Optional[Settings] = None):
     settings = settings or Settings()
     service_started_at = time.monotonic()
     database = Database(settings.database_path)
+    database.recover_client_calls()
 
     async def persist_event(event: GatewayEvent) -> None:
         await asyncio.to_thread(
@@ -90,6 +94,7 @@ def build_app(settings: Optional[Settings] = None):
     )
     runtime = GatewayRuntime(locator, events, state)
     call_coordinator = CallCoordinator()
+    voip_service = VoIPPushService(apns_service, call_coordinator.current)
     module_voice_runtime = None
     if settings.module_voice_manifest is not None:
         manifest = RuntimeManifest.load(settings.module_voice_manifest)
@@ -102,7 +107,7 @@ def build_app(settings: Optional[Settings] = None):
         )
     audio_adapter: AlsaNTgCallsAudioAdapter
     telegram_service: KurigramTelegramService
-    web_call_controller: WebCallController
+    web_call_controller: ClientCallController
 
     async def request_telegram_call(user_id: int):
         return await telegram_service.request_private_call(user_id, stream=audio_adapter.stream())
@@ -121,37 +126,23 @@ def build_app(settings: Optional[Settings] = None):
 
     async def incoming_cellular_call(number):
         await web_audio_diagnostic.stop()
-        try:
-            await telegram_service.notify_incoming_cellular_call(number)
-        except Exception as exc:
-            await events.publish(GatewayEvent("call.notification_error", {
-                "error": type(exc).__name__,
-            }))
         frontend = settings.incoming_call_frontend
         if frontend == "auto":
-            if not settings.web_enabled:
-                frontend = "telegram"
-            else:
-                frontend = (
-                    "telegram"
-                    if telegram_service.state == "connected"
-                    and telegram_service.call_bridge is not None
-                    else "web"
-                )
+            frontend = "app" if settings.web_enabled else "telegram"
         if frontend == "telegram":
+            try:
+                await telegram_service.notify_incoming_cellular_call(number)
+            except Exception as exc:
+                await events.publish(GatewayEvent("call.notification_error", {"error": type(exc).__name__}))
             return await call_orchestrator.start_inbound(number)
-        return await web_call_controller.start_inbound(number)
+        return await web_call_controller.start_inbound(number, frontend=frontend)
 
     async def record_call(record):
         await asyncio.to_thread(database.save_call, record)
+        voip_service.on_state(record)
         await events.publish(GatewayEvent("call.state", {
-            "id": record.id,
-            "direction": record.direction.value,
-            "state": record.state.value,
-            "cellular_number": record.cellular_number,
-            "telegram_user_id": record.telegram_user_id,
-            "frontend": record.frontend,
-            "last_error": record.last_error,
+            key: value.isoformat() if hasattr(value, "isoformat") else value
+            for key, value in asdict(record).items()
         }))
 
     async def gateway_status():
@@ -159,7 +150,7 @@ def build_app(settings: Optional[Settings] = None):
         current_call = await call_coordinator.current()
         return {
             **state.get("status", {}),
-            "apns": apns_service.status(),
+            "apns": {**apns_service.status(), "voip": voip_service.status()},
             "public_base_url": settings.public_base_url,
             "uptime_seconds": round(time.monotonic() - service_started_at, 3),
             "module": state.get("module", {"connected": False}),
@@ -199,7 +190,7 @@ def build_app(settings: Optional[Settings] = None):
         audio_dial_cue=audio_adapter.play_telegram_dial_cue,
         record_sink=record_call,
     )
-    web_call_controller = WebCallController(
+    web_call_controller = ClientCallController(
         coordinator=call_coordinator,
         cellular_dial=module_service.dial,
         cellular_answer=module_service.answer,
@@ -225,7 +216,7 @@ def build_app(settings: Optional[Settings] = None):
         frontend = await active_frontend()
         if frontend is None:
             return None
-        if frontend == "web":
+        if frontend in {"web", "app"}:
             return await web_call_controller.cellular_connected()
         return await call_orchestrator.cellular_connected()
 
@@ -233,22 +224,58 @@ def build_app(settings: Optional[Settings] = None):
         frontend = await active_frontend()
         if frontend is None:
             return None
-        if frontend == "web":
+        if frontend in {"web", "app"}:
             return await web_call_controller.cellular_disconnected()
         return await call_orchestrator.cellular_disconnected()
 
     async def hangup_active(call_id=None, reason="hangup"):
-        if await active_frontend() == "web":
+        if await active_frontend() in {"web", "app"}:
             return await web_call_controller.hangup(call_id, reason)
         return await call_orchestrator.hangup(call_id, reason)
 
-    async def issue_audio_ticket(call_id: str):
-        await web_call_controller.require_call(call_id)
-        return audio_tickets.issue(call_id)
+    def require_installation(installation_id):
+        if not installation_id or not database.registered_installation(installation_id, apns_service.environment, apns_service.bundle_id):
+            raise CallBridgeError("installation is not registered in this environment")
 
-    async def start_web_outbound(number: str):
+    async def issue_audio_ticket(call_id: str, installation_id=None):
+        record = await web_call_controller.require_owner(call_id, installation_id)
+        if record.frontend == "app":
+            require_installation(installation_id)
+        return audio_tickets.issue(call_id, installation_id if record.frontend == "app" else None)
+
+    async def consume_audio_ticket(call_id: str, ticket: str):
+        context = audio_tickets.take(call_id, ticket)
+        if context is None:
+            return False
+        try:
+            record = await web_call_controller.require_owner(call_id, context["installation_id"])
+            if record.frontend == "app":
+                require_installation(context["installation_id"])
+        except CallBridgeError:
+            return False
+        return context
+
+    async def answer_client_call(call_id: str, installation_id=None):
+        record = await web_call_controller.require_call(call_id)
+        if record.frontend == "app":
+            require_installation(installation_id)
+        return await web_call_controller.answer(call_id, installation_id)
+
+    async def hangup_client_call(call_id: str, installation_id=None):
+        record = await call_coordinator.current()
+        if record is not None and record.frontend == "app":
+            require_installation(installation_id)
+        return await web_call_controller.hangup(call_id, installation_id=installation_id, client=True)
+
+    async def current_client_call():
+        record = await call_coordinator.current()
+        return record if record is not None and record.frontend in {"web", "app"} else None
+
+    async def start_web_outbound(number: str, installation_id=None):
+        if installation_id is not None:
+            require_installation(installation_id)
         await web_audio_diagnostic.stop()
-        return await web_call_controller.start_outbound(number)
+        return await web_call_controller.start_outbound(number, installation_id)
 
     async def start_telegram_outbound(number: str, user_id: int):
         await web_audio_diagnostic.stop()
@@ -350,12 +377,12 @@ def build_app(settings: Optional[Settings] = None):
     state["at"] = module_service.at
     state["send_sms"] = module_service.send_sms
     state["authorize_adb"] = module_service.authorize_adb
-    state["current_call"] = call_coordinator.current
-    state["hangup"] = hangup_active
+    state["current_call"] = current_client_call
+    state["hangup"] = hangup_client_call
     state["start_web_call"] = start_web_outbound
-    state["answer_web_call"] = web_call_controller.answer
+    state["answer_web_call"] = answer_client_call
     state["issue_audio_ticket"] = issue_audio_ticket
-    state["consume_audio_ticket"] = audio_tickets.consume
+    state["consume_audio_ticket"] = consume_audio_ticket
     state["run_audio_websocket"] = web_audio_session.run
     state["start_audio_diagnostic"] = web_audio_diagnostic.create
     state["issue_audio_diagnostic_ticket"] = web_audio_diagnostic.issue_ticket
@@ -496,6 +523,7 @@ def build_app(settings: Optional[Settings] = None):
             async with AsyncExitStack() as cleanup:
                 cleanup.callback(database.close)
                 cleanup.push_async_callback(apns_service.stop)
+                cleanup.push_async_callback(voip_service.stop)
                 cleanup.push_async_callback(runtime.stop)
                 cleanup.push_async_callback(telegram_service.stop)
                 cleanup.callback(module_service.close)
@@ -511,6 +539,7 @@ def build_app(settings: Optional[Settings] = None):
     app.state.gateway_module_service = module_service
     app.state.gateway_call_coordinator = call_coordinator
     app.state.gateway_web_calls = web_call_controller
+    app.state.gateway_voip = voip_service
     app.state.gateway_audio_adapter = audio_adapter
     app.state.gateway_audio_diagnostic = web_audio_diagnostic
     return app

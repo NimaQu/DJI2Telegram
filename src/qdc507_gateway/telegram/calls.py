@@ -2,87 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+from qdc507_gateway.calls.core import CallBridgeError, CallCoordinator
+
 from qdc507_gateway.models import CallDirection, CallRecord, CallState
-
-
-class CallBusyError(RuntimeError):
-    pass
-
-
-@dataclass
-class CallCoordinator:
-    """Transport-independent call state machine."""
-
-    active: Optional[CallRecord] = None
-    lock: asyncio.Lock = None  # type: ignore
-
-    def __post_init__(self) -> None:
-        if self.lock is None:
-            self.lock = asyncio.Lock()
-
-    async def start_outbound(
-        self,
-        number: str,
-        telegram_user_id: Optional[int],
-        *,
-        frontend: str = "telegram",
-        initial_state: CallState = CallState.waiting_telegram,
-    ) -> CallRecord:
-        async with self.lock:
-            if self.active and self.active.state not in (CallState.ended, CallState.failed):
-                raise CallBusyError("another call is already active")
-            self.active = CallRecord(
-                id=str(uuid.uuid4()), direction=CallDirection.outbound_cellular,
-                state=initial_state, cellular_number=number,
-                telegram_user_id=telegram_user_id, frontend=frontend,
-            )
-            return self.active
-
-    async def start_inbound(
-        self,
-        number: Optional[str],
-        telegram_user_id: Optional[int],
-        *,
-        frontend: str = "telegram",
-        initial_state: CallState = CallState.waiting_telegram,
-    ) -> CallRecord:
-        async with self.lock:
-            if self.active and self.active.state not in (CallState.ended, CallState.failed):
-                raise CallBusyError("another call is already active")
-            self.active = CallRecord(
-                id=str(uuid.uuid4()), direction=CallDirection.inbound_cellular,
-                state=initial_state, cellular_number=number,
-                telegram_user_id=telegram_user_id, frontend=frontend,
-            )
-            return self.active
-
-    async def transition(self, state: CallState, error: Optional[str] = None) -> CallRecord:
-        async with self.lock:
-            if self.active is None:
-                raise RuntimeError("no active call")
-            self.active.state = state
-            self.active.last_error = error
-            if state == CallState.active and self.active.connected_at is None:
-                from qdc507_gateway.models import utc_now
-                self.active.connected_at = utc_now()
-            if state in (CallState.ended, CallState.failed):
-                from qdc507_gateway.models import utc_now
-                self.active.ended_at = utc_now()
-            return self.active
-
-    async def current(self) -> Optional[CallRecord]:
-        async with self.lock:
-            if self.active is None or self.active.state in (CallState.ended, CallState.failed):
-                return None
-            return self.active
-
-
-class CallBridgeError(RuntimeError):
-    pass
 
 
 @dataclass
@@ -120,7 +45,7 @@ class CallBridgeOrchestrator:
             self._hangup_lock = asyncio.Lock()
 
     async def start_outbound(self, number: str, telegram_user_id: Optional[int] = None) -> CallRecord:
-        record = await self.coordinator.start_outbound(number, telegram_user_id or self.user_id)
+        record = await self.coordinator.start_outbound(number, telegram_user_id or self.user_id, frontend="telegram", initial_state=CallState.waiting_telegram)
         await self._record(record)
         try:
             self.telegram_handle = await self.request_telegram(record.telegram_user_id or self.user_id)
@@ -131,7 +56,7 @@ class CallBridgeOrchestrator:
             raise CallBridgeError("could not start Telegram call") from exc
 
     async def start_inbound(self, number: Optional[str]) -> CallRecord:
-        record = await self.coordinator.start_inbound(number, self.user_id)
+        record = await self.coordinator.start_inbound(number, self.user_id, frontend="telegram", initial_state=CallState.waiting_telegram)
         await self._record(record)
         self._cellular_started = True
         try:

@@ -275,10 +275,12 @@ class AlsaNTgCallsAudioAdapter:
                 "alsa": None if self.alsa is None else self.alsa.stats(),
                 "bridge": self.pcm_bridge.stats(),
             }
-        try:
-            bridge = self.telegram_bridge_getter()
-        except Exception:
-            bridge = None
+        bridge = None
+        if self.binding is not None:
+            try:
+                bridge = self.telegram_bridge_getter()
+            except Exception:
+                pass
         if bridge is not None and self.binding is not None:
             try:
                 await bridge.detach_pcm(self.binding)

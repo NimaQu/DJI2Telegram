@@ -140,11 +140,11 @@ class Settings:
             raise ConfigurationError("network.apn must be empty or an APN of up to 100 ASCII letters, digits, dots, underscores or hyphens")
         if not isinstance(self.network_pdp_type, str) or self.network_pdp_type not in {"IP", "IPV6", "IPV4V6"}:
             raise ConfigurationError("network.pdp_type must be IP, IPV6, or IPV4V6")
-        if self.incoming_call_frontend not in {"web", "telegram", "auto"}:
-            raise ConfigurationError("calls.incoming_frontend must be web, telegram, or auto")
-        if not self.web_enabled and self.incoming_call_frontend == "web":
+        if self.incoming_call_frontend not in {"web", "app", "telegram", "auto"}:
+            raise ConfigurationError("calls.incoming_frontend must be app, web, telegram, or auto")
+        if not self.web_enabled and self.incoming_call_frontend in {"web", "app"}:
             raise ConfigurationError(
-                "calls.incoming_frontend cannot be web when server.enabled is false"
+                "calls.incoming_frontend cannot be web or app when server.enabled is false"
             )
         if not 1 <= self.port <= 65535:
             raise ConfigurationError("server.port must be between 1 and 65535")

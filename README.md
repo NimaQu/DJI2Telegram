@@ -266,3 +266,9 @@ journalctl -u dji2telegram.service --since "10 minutes ago" \
 ```
 
 排障后恢复 `INFO`。分享日志前遮盖电话号码等个人信息。
+
+## iOS PushKit / CallKit 通话
+
+设置 `calls.incoming_frontend = "app"` 可将蜂窝来电交给 App，绕过 Telegram 来电通知和通话编排。设备注册共用原 PUT / DELETE 接口，支持独立更新 `device_token`、`voip_token`。来电采用短时 VoIP 邀请；接听归属、音频票据与状态查询通过 REST/SSE 实现。
+
+参见 [iOS 通话对接文档](docs/ios-calls.md)，包括多设备抢接、CallKit 激活音频时序、WebSocket PCM 格式和呼出流程。`auto` 在 HTTP 服务开启时选择 App，否则选择 Telegram。

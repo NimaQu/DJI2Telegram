@@ -13,7 +13,7 @@ from qdc507_gateway.models import CallDirection, CallRecord, CallState
 from qdc507_gateway.modem.service import ModuleServiceError
 from qdc507_gateway.security import hash_token
 from qdc507_gateway.storage.database import Database
-from qdc507_gateway.telegram.calls import CallBridgeError, CallCoordinator
+from qdc507_gateway.calls.core import CallBridgeError, CallCoordinator
 from qdc507_gateway.web.calls import (
     AUDIO_FRAME_BYTES,
     AUDIO_SUBPROTOCOL,

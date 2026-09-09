@@ -4,7 +4,7 @@ import asyncio
 
 from qdc507_gateway.modem.call_monitor import monitor_cellular_call_status
 from qdc507_gateway.models import CallState
-from qdc507_gateway.telegram.calls import CallCoordinator
+from qdc507_gateway.calls.core import CallCoordinator
 
 
 def test_call_status_monitor_marks_answered_call_active_and_stops_polling():

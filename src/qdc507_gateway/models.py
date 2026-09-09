@@ -206,6 +206,8 @@ class CallRecord:
     connected_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     last_error: Optional[str] = None
+    owner_installation_id: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)

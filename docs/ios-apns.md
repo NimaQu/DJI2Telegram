@@ -1,6 +1,6 @@
 # iOS 短信推送对接
 
-Bridge 使用 Apple Push Notification service (APNs) 直接发送普通 alert 通知，不经过第三方推送平台。当前为单用户系统，所有已注册设备接收新收到的完整短信；iOS App 与通话功能不在本次实现范围内。
+Bridge 使用 Apple Push Notification service (APNs) 直接发送普通 alert 通知，不经过第三方推送平台。当前为单用户系统，所有已注册普通通知 token 的设备接收新收到的完整短信。PushKit / CallKit 通话另见 [iOS 通话对接](ios-calls.md)。
 
 ## 服务器配置
 
@@ -64,6 +64,8 @@ Content-Type: application/json
 ```
 
 成功始终返回 200。UUID 无效、token 非十六进制、长度不是偶数或超出 2–512 字符返回 422。token 统一小写，不固定要求 64 字符。重复注册是幂等的；同一环境和 Bundle ID 下，同一个 token 仅保留一个注册目标。`enabled=false` 时仍可注册，但不会推送；之后补齐 Bundle ID 需要重新注册。
+
+同一 PUT 也接受 `voip_token`，普通通知和 PushKit token 独立更新。至少提供一个字段；省略字段表示保持原值，传 `null` 注销该通道。DELETE 设备会同时注销两个通道。
 
 ```sh
 curl --fail-with-body -X PUT \

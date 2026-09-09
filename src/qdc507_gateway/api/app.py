@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from qdc507_gateway import __version__
 from qdc507_gateway.events import EventBus
+from qdc507_gateway.calls.core import public_call_error
 from qdc507_gateway.models import GatewayEvent
 from qdc507_gateway.security import (
     AuthFailureLimiter,
@@ -21,20 +22,31 @@ from qdc507_gateway.storage.database import Database
 from qdc507_gateway.web.calls import (
     AUDIO_SUBPROTOCOL,
     extract_audio_ticket,
-    public_call_error,
 )
 
 
 class PushRegistration(BaseModel):
-    device_token: str = Field(min_length=2, max_length=512, pattern=r"^[0-9A-Fa-f]+$")
+    device_token: str | None = Field(default=None, min_length=2, max_length=512, pattern=r"^[0-9A-Fa-f]+$")
+    voip_token: str | None = Field(default=None, min_length=2, max_length=512, pattern=r"^[0-9A-Fa-f]+$")
 
-    @field_validator("device_token")
+    @field_validator("device_token", "voip_token")
     @classmethod
-    def normalize_token(cls, value: str) -> str:
+    def normalize_token(cls, value):
+        if value is None:
+            return None
         if len(value) % 2:
-            raise ValueError("device_token must have even hexadecimal length")
+            raise ValueError("token must have even hexadecimal length")
         return value.lower()
 
+    @model_validator(mode="after")
+    def has_channel(self):
+        if not self.model_fields_set & {"device_token", "voip_token"}:
+            raise ValueError("provide device_token or voip_token")
+        return self
+
+
+class CallDevice(BaseModel):
+    installation_id: UUID
 
 
 async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
@@ -186,7 +198,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         service = state.get("apns")
         if service is None:
             raise HTTPException(status_code=503, detail="push service is unavailable")
-        return service.register(str(installation_id), payload.device_token)
+        return service.register(str(installation_id), **payload.model_dump(exclude_unset=True))
 
     @app.post("/api/v1/sms/{sms_id}/ack", status_code=204)
     async def acknowledge_sms(sms_id: str, _: str = Depends(require_token)):
@@ -241,6 +253,13 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
                 current = await current
         return None if current is None else asdict(current)
 
+    @app.get("/api/v1/calls/{call_id}")
+    async def call_detail(call_id: str, _: str = Depends(require_token)):
+        row = database.get_call(call_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="call not found")
+        return dict(row)
+
     @app.get("/api/v1/calls")
     async def calls(limit: int = 50, _: str = Depends(require_token)):
         if limit < 1 or limit > 500:
@@ -264,13 +283,20 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         normalized = number.strip().replace(" ", "").replace("-", "")
         if not re.fullmatch(r"\+?[0-9]{1,20}", normalized):
             raise HTTPException(status_code=422, detail="invalid phone number")
-        if payload.get("frontend", "web") != "web":
-            raise HTTPException(status_code=422, detail="API calls use the web frontend")
+        frontend = payload.get("frontend", "app" if payload.get("installation_id") else "web")
+        if frontend not in {"app", "web"}:
+            raise HTTPException(status_code=422, detail="API calls use the app or web frontend")
+        installation = payload.get("installation_id")
+        if frontend == "app" or installation is not None:
+            try:
+                installation = str(UUID(installation))
+            except (ValueError, TypeError, AttributeError):
+                raise HTTPException(status_code=422, detail="valid installation_id is required") from None
         handler = state.get("start_web_call")
         if handler is None:
             raise HTTPException(status_code=503, detail="web call service is unavailable")
         try:
-            result = handler(normalized)
+            result = handler(normalized, installation) if installation else handler(normalized)
             if hasattr(result, "__await__"):
                 result = await result
             return asdict(result)
@@ -278,12 +304,12 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/calls/{call_id}/answer")
-    async def answer_call(call_id: str, _: str = Depends(require_token)):
+    async def answer_call(call_id: str, payload: Optional[CallDevice] = None, _: str = Depends(require_token)):
         handler = state.get("answer_web_call")
         if handler is None:
             raise HTTPException(status_code=503, detail="web call service is unavailable")
         try:
-            result = handler(call_id)
+            result = handler(call_id, str(payload.installation_id)) if payload else handler(call_id)
             if hasattr(result, "__await__"):
                 result = await result
             return asdict(result)
@@ -291,12 +317,12 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/calls/{call_id}/audio-ticket")
-    async def audio_ticket(call_id: str, _: str = Depends(require_token)):
+    async def audio_ticket(call_id: str, payload: Optional[CallDevice] = None, _: str = Depends(require_token)):
         handler = state.get("issue_audio_ticket")
         if handler is None:
             raise HTTPException(status_code=503, detail="web audio service is unavailable")
         try:
-            result = handler(call_id)
+            result = handler(call_id, str(payload.installation_id)) if payload else handler(call_id)
             if hasattr(result, "__await__"):
                 result = await result
             return result
@@ -333,12 +359,12 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/calls/{call_id}/hangup")
-    async def hangup(call_id: str, _: str = Depends(require_token)):
+    async def hangup(call_id: str, payload: Optional[CallDevice] = None, _: str = Depends(require_token)):
         handler = state.get("hangup")
         if handler is None:
             raise HTTPException(status_code=503, detail="call service is unavailable")
         try:
-            result = handler(call_id)
+            result = handler(call_id, str(payload.installation_id)) if payload else handler(call_id)
             if hasattr(result, "__await__"):
                 result = await result
             return {"call_id": call_id, "result": result}
@@ -432,7 +458,8 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             return
         await websocket.accept(subprotocol=AUDIO_SUBPROTOCOL)
         try:
-            result = runner(websocket, call_id)
+            owner = accepted.get("installation_id") if isinstance(accepted, dict) else None
+            result = runner(websocket, call_id, owner) if owner else runner(websocket, call_id)
             if hasattr(result, "__await__"):
                 await result
         except Exception as exc:
