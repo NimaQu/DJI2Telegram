@@ -175,6 +175,12 @@ class AlsaPCMDevice:
             offset += written * 2
             self.frames_written += written
 
+    def prime_playback(self) -> None:
+        # ALSA starts at the first sample (start_threshold=1). Seed three
+        # periods so a scheduling delay at the next 20 ms tick cannot empty it.
+        for _ in range(3):
+            self.write_silence()
+
     def write_silence(self) -> None:
         """Keep the UAC playback clock running while the remote leg is idle."""
         self.write(PCMFrame(b"\0" * (self.period_frames * 2), 8000, 1, 2))

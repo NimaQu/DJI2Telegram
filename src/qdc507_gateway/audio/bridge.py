@@ -265,6 +265,12 @@ class AlsaAudioAdapter:
                 self._stop.wait(0.005)
 
     def _playback_worker(self) -> None:
+        prime = getattr(self.alsa, "prime_playback", None)
+        if callable(prime):
+            try:
+                prime()
+            except Exception:
+                self.pcm_bridge.record_xrun("client_to_cellular")
         period = 0.020
         deadline = time.monotonic()
         while not self._stop.is_set():
