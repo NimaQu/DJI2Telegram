@@ -165,3 +165,36 @@ async def test_shutdown_joins_worker_before_closing_alsa():
     release.set()
     await stop
     assert order == ["read finished", "closed"]
+
+
+def test_alsa_rejects_silent_rate_substitution_and_closes_both_handles(monkeypatch):
+    closed = []
+
+    def pcm(*args, **kwargs):
+        return SimpleNamespace(
+            info=lambda: {
+                "rate": 16000,
+                "channels": 1,
+                "format_name": "S16_LE",
+                "period_size": 160,
+                "buffer_size": 640,
+            },
+            close=lambda: closed.append(True),
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "alsaaudio",
+        SimpleNamespace(
+            PCM=pcm,
+            PCM_CAPTURE=1,
+            PCM_PLAYBACK=0,
+            PCM_NORMAL=0,
+            PCM_FORMAT_S16_LE=2,
+        ),
+    )
+    output = AlsaPCMDevice("fake")
+    with pytest.raises(ALSAUnavailable, match="native PCM16"):
+        output.open()
+    assert len(closed) == 2
+    assert output.capture is None and output.playback is None

@@ -100,6 +100,7 @@ class AlsaPCMDevice:
         self.frames_written = 0
         self.nonzero_samples = 0
         self.silence_periods = 0
+        self.hardware = {}
         self._opened_at: float | None = None
         self._first_capture_at: float | None = None
         self._first_nonzero_at: float | None = None
@@ -116,6 +117,13 @@ class AlsaPCMDevice:
                 channels=1, rate=8000, format=self._alsa.PCM_FORMAT_S16_LE,
                 periodsize=self.period_frames,
             )
+            for name, stream in (("capture", self.capture), ("playback", self.playback)):
+                info = stream.info()
+                self.hardware[name] = {key: info[key] for key in (
+                    "rate", "channels", "format_name", "period_size", "buffer_size",
+                )}
+                if info["rate"] != 8000 or info["channels"] != 1 or info["format_name"] != "S16_LE":
+                    raise ALSAUnavailable("ALSA did not accept native PCM16 mono at 8000 Hz")
             self._opened_at = time.monotonic()
         except Exception:
             self.close()
@@ -149,7 +157,11 @@ class AlsaPCMDevice:
         recoveries = 0
         deadline = time.monotonic() + 0.2
         while offset < len(data):
-            written = self.playback.write(data[offset:])
+            try:
+                written = self.playback.write(data[offset:])
+            except Exception:
+                self.write_failures += 1
+                raise
             if not isinstance(written, int):
                 self.write_failures += 1
                 raise ALSAUnavailable("invalid ALSA playback result")
@@ -186,9 +198,10 @@ class AlsaPCMDevice:
         self.write(PCMFrame(b"\0" * (self.period_frames * 2), 8000, 1, 2))
         self.silence_periods += 1
 
-    def stats(self) -> dict[str, int | float | None]:
+    def stats(self) -> dict[str, object]:
         opened_at = self._opened_at
         return {
+            "hardware": self.hardware,
             "xruns": self.xruns,
             "playback_recoveries": self.playback_recoveries,
             "partial_writes": self.partial_writes,
