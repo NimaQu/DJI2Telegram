@@ -130,8 +130,8 @@ async def test_playback_worker_continues_while_event_loop_is_busy():
     worker.start()
     try:
         # Deliberately block the asyncio loop: ALSA is driven by its own thread.
-        time.sleep(0.04)
-        assert len(writes) >= 5
+        time.sleep(0.12)
+        assert 4 <= len(writes) <= 8
         assert all(ident != threading.get_ident() for ident in writes)
     finally:
         adapter._stop.set()

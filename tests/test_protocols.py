@@ -259,7 +259,7 @@ def test_audio_adapter_fills_idle_playback_periods_with_silence():
         adapter.alsa = fake
         adapter._stop.clear()
         task = asyncio.create_task(asyncio.to_thread(adapter._playback_worker))
-        await asyncio.sleep(0.015)
+        await asyncio.sleep(0.025)
         adapter._stop.set()
         await task
         assert fake.silence_periods > 0

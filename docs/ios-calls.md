@@ -147,6 +147,6 @@ Content-Type: application/json
 
 客户端持续发送 PCM16/8 kHz 单声道音频，建议每 20 ms 发一帧；允许批量发送最多 200 ms，但长时间攒包会增加延迟。麦克风静音时也发送对应时长的零采样，避免把静音检测误当成网络断流。重采样后不足 160 个采样点的尾部必须保留到下一批，不要按每次麦克风回调独立截断。
 
-bridge 的播放缓冲先积累 3 帧（60 ms），缓冲耗尽后重新积累并逐步增加目标，最多 6 帧（120 ms）。最多保存 20 帧（400 ms），超过上限仍丢弃最旧音频，避免延迟无限增长。ALSA 由独立线程连续供给，欠载后重写原帧，短写只补写剩余采样。该处理不改变 WebSocket 音频协议，也无法恢复客户端未发送的音频。
+bridge 的播放缓冲先积累 3 帧（60 ms），缓冲耗尽后重新积累并逐步增加目标，最多 6 帧（120 ms）。最多保存 20 帧（400 ms），超过上限仍丢弃最旧音频，避免延迟无限增长。ALSA 由独立线程按单调时钟的绝对 20 ms 截止时间连续供给，避免写入立即返回时过快消耗队列；欠载后重写原帧，短写只补写剩余采样。该处理不改变 WebSocket 音频协议，也无法恢复客户端未发送的音频。
 
 `audio.state` 的停止记录包含本次统计。`client_to_cellular` 中 `underruns` 是运行中缓冲耗尽次数，`startup_silence_periods` 与 `rebuffer_silence_periods` 分别记录启动和运行中等待补充音频的 20 ms 周期。`dropped` 是溢出丢帧；`max_interarrival_ms`、`gaps_over_40ms`、`audio_received_ms` 和 `last_frame_ms` 帮助检查供给节奏。ALSA 的 `playback_recoveries` 记录欠载重试，`write_failures` 记录未恢复的写入失败。

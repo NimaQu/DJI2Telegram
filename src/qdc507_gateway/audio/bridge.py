@@ -95,6 +95,7 @@ class AlsaAudioAdapter:
         self._module_runtime_started = False
         self._mode: Optional[str] = None
         self._lifecycle_lock = asyncio.Lock()
+        self.playback_clock_resyncs = 0
         self._session_started_at: Optional[float] = None
         self._last_session: Optional[dict[str, object]] = None
 
@@ -136,6 +137,7 @@ class AlsaAudioAdapter:
         self._stop.clear()
         await self.pcm_bridge.start()
         self._mode = mode
+        self.playback_clock_resyncs = 0
         self._session_started_at = time.monotonic()
         self._workers = [
             threading.Thread(target=self._capture_worker, name="audio-capture", daemon=True),
@@ -174,6 +176,7 @@ class AlsaAudioAdapter:
         if was_active:
             session_summary = {
                 "mode": self._mode,
+                "playback_clock_resyncs": self.playback_clock_resyncs,
                 "duration_ms": None if self._session_started_at is None else round(
                     max(0.0, time.monotonic() - self._session_started_at) * 1000,
                     3,
@@ -262,7 +265,11 @@ class AlsaAudioAdapter:
                 self._stop.wait(0.005)
 
     def _playback_worker(self) -> None:
+        period = 0.020
+        deadline = time.monotonic()
         while not self._stop.is_set():
+            if self._stop.wait(max(0.0, deadline - time.monotonic())):
+                return
             try:
                 frame = self.pcm_bridge.pull_for_cellular()
                 if frame is None:
@@ -272,6 +279,14 @@ class AlsaAudioAdapter:
             except Exception:
                 self.pcm_bridge.record_xrun("client_to_cellular")
                 self._stop.wait(0.005)
+            # ALSA may accept frames immediately; never let that drain the
+            # network queue faster than real-time. Absolute deadlines avoid
+            # accumulating write/scheduling overhead on every 20 ms frame.
+            deadline += period
+            now = time.monotonic()
+            if now > deadline + period:
+                self.playback_clock_resyncs += 1
+                deadline = now
 
     def stats(self) -> dict[str, object]:
         return {
