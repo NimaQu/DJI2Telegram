@@ -1,7 +1,7 @@
 [project]
-name = "DJI2Telegram"
-version = "0.4.0"
-description = "Headless Linux QDC507 gateway for Telegram and web clients"
+name = "djisimhub"
+version = "0.5.0"
+description = "Headless Linux QDC507 gateway for iOS and web clients"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115",
@@ -13,10 +13,6 @@ dependencies = [
   "libusb1>=3.2",
   "pyudev>=0.24",
   "pyalsaaudio>=0.11",
-  "kurigram>=1.2",
-  "tgcrypto>=1.2.5",
-  "py-tgcalls>=2.2",
-  "ntgcalls>=2.2.4,<3",
 ]
 
 [project.optional-dependencies]
@@ -28,8 +24,8 @@ dev = [
 ]
 
 [project.scripts]
-dji2telegram = "qdc507_gateway.cli:main"
-dji2telegram-server = "qdc507_gateway.server:main"
+djisimhub = "qdc507_gateway.cli:main"
+djisimhub-server = "qdc507_gateway.server:main"
 
 [build-system]
 requires = ["hatchling"]

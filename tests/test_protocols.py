@@ -17,7 +17,7 @@ from qdc507_gateway.adb.protocol import (
 )
 from qdc507_gateway.adb.transport import ADBClient, ADBTransport
 from qdc507_gateway.audio.alsa import find_qdc507_pcm_devices, resample_pcm16_mono
-from qdc507_gateway.audio.bridge import AlsaNTgCallsAudioAdapter, PCMBridge
+from qdc507_gateway.audio.bridge import AlsaAudioAdapter, PCMBridge
 from qdc507_gateway.audio.alsa import ALSAUnavailable
 from qdc507_gateway.audio.ring import PCMFrame, RingBuffer
 from qdc507_gateway.security import dangerous_at_command, hash_token, verify_token
@@ -171,7 +171,7 @@ def test_pcm_bridge_is_bounded_and_requires_active_call():
     async def run():
         await asyncio_bridge.start()
         assert asyncio_bridge.push_cellular(frame)
-        assert asyncio_bridge.pull_for_telegram() == frame
+        assert asyncio_bridge.pull_for_client() == frame
         await asyncio_bridge.stop()
         assert asyncio_bridge.pull_for_cellular() is None
 
@@ -181,30 +181,13 @@ def test_pcm_bridge_is_bounded_and_requires_active_call():
 
 def test_pcm_bridge_records_xruns_per_direction():
     bridge = PCMBridge(capacity=1)
-    bridge.record_xrun("cellular_to_telegram")
-    bridge.record_xrun("telegram_to_cellular")
+    bridge.record_xrun("cellular_to_client")
+    bridge.record_xrun("client_to_cellular")
     stats = bridge.stats()
-    assert stats["cellular_to_telegram"]["xruns"] == 1
-    assert stats["telegram_to_cellular"]["xruns"] == 1
+    assert stats["cellular_to_client"]["xruns"] == 1
+    assert stats["client_to_cellular"]["xruns"] == 1
 
 
-def test_pcm_bridge_telegram_cue_is_local_and_click_faded():
-    bridge = PCMBridge(capacity=2)
-
-    async def run():
-        silence = b"\0" * 160
-        await bridge.start()
-        assert bridge.queue_telegram_cue(duration_ms=20)
-        first = bridge.mix_telegram_cue(silence, 8000)
-        second = bridge.mix_telegram_cue(silence, 8000)
-        assert first != silence
-        assert second != silence
-        assert bridge.mix_telegram_cue(silence, 8000) == silence
-        assert bridge.telegram_to_cellular.stats()["frames_in"] == 0
-        await bridge.stop()
-        assert not bridge.queue_telegram_cue()
-
-    asyncio.run(run())
 
 
 def test_audio_stats_and_pcm16_resampling(tmp_path):
@@ -242,13 +225,12 @@ def test_audio_adapter_reports_missing_uac_without_claiming_devices(tmp_path):
         async def publish(event):
             events.append(event)
 
-        adapter = AlsaNTgCallsAudioAdapter(
-            lambda: object(),
+        adapter = AlsaAudioAdapter(
             sysfs_root=tmp_path,
             event_publisher=publish,
         )
         try:
-            await adapter.start(42)
+            await adapter.start_web("42")
         except ALSAUnavailable:
             pass
         else:
@@ -272,7 +254,7 @@ def test_audio_adapter_fills_idle_playback_periods_with_silence():
             raise AssertionError("no real frame was queued")
 
     async def run():
-        adapter = AlsaNTgCallsAudioAdapter(lambda: None)
+        adapter = AlsaAudioAdapter()
         fake = FakeAlsa()
         adapter.alsa = fake
         adapter._stop.clear()
@@ -297,8 +279,7 @@ def test_audio_adapter_does_not_reuse_uncertain_module_voice_cleanup():
 
     async def run():
         runtime = Runtime()
-        adapter = AlsaNTgCallsAudioAdapter(
-            lambda: None,
+        adapter = AlsaAudioAdapter(
             module_runtime=runtime,
         )
         adapter._module_runtime_started = True

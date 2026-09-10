@@ -35,17 +35,6 @@ def _optional_path(value: Any, base_dir: Path, field: str) -> Path | None:
     return _path(value, base_dir, field)
 
 
-def _optional_int(value: Any, field: str) -> int | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, bool):
-        raise ConfigurationError(f"{field} must be an integer")
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ConfigurationError(f"{field} must be an integer") from exc
-
-
 def _optional_string(value: Any, field: str) -> str | None:
     if value in (None, ""):
         return None
@@ -85,16 +74,11 @@ class Settings:
     web_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8787
-    telegram_session: Path = Path("/var/lib/qdc507-gateway/telegram.session")
-    telegram_bot_session: Path = Path("/var/lib/qdc507-gateway/telegram-bot.session")
-    telegram_user_id: int | None = None
-    telegram_api_id: int | None = None
-    telegram_api_hash: str | None = None
-    telegram_bot_token: str | None = None
-    telegram_allow_service_restart: bool = False
+    allow_service_restart: bool = False
+    systemd_unit: str = "djisimhub.service"
     module_voice_manifest: Path | None = None
     module_voice_resource_dir: Path | None = None
-    incoming_call_frontend: str = "telegram"
+    incoming_call_frontend: str = "app"
     log_level: str = "INFO"
     auth_max_failures: int = 10
     auth_failure_window_seconds: int = 300
@@ -104,7 +88,6 @@ class Settings:
     network_pdp_type: str = "IP"
 
     public_base_url: str | None = None
-    telegram_sms_forwarding_enabled: bool = True
     apns_enabled: bool = False
     apns_sandbox: bool = True
     apns_key_path: Path | None = None
@@ -113,6 +96,8 @@ class Settings:
     apns_bundle_id: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.systemd_unit, str) or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@-]*\.service", self.systemd_unit) is None:
+            raise ConfigurationError("server.systemd_unit must be a systemd service name")
         if self.public_base_url:
             from urllib.parse import urlsplit
             url = urlsplit(self.public_base_url)
@@ -140,8 +125,8 @@ class Settings:
             raise ConfigurationError("network.apn must be empty or an APN of up to 100 ASCII letters, digits, dots, underscores or hyphens")
         if not isinstance(self.network_pdp_type, str) or self.network_pdp_type not in {"IP", "IPV6", "IPV4V6"}:
             raise ConfigurationError("network.pdp_type must be IP, IPV6, or IPV4V6")
-        if self.incoming_call_frontend not in {"web", "app", "telegram", "auto"}:
-            raise ConfigurationError("calls.incoming_frontend must be app, web, telegram, or auto")
+        if self.incoming_call_frontend not in {"web", "app", "auto"}:
+            raise ConfigurationError("calls.incoming_frontend must be app, web, or auto")
         if not self.web_enabled and self.incoming_call_frontend in {"web", "app"}:
             raise ConfigurationError(
                 "calls.incoming_frontend cannot be web or app when server.enabled is false"
@@ -193,18 +178,11 @@ class Settings:
         apns = _table(document, "apns")
         app = _table(document, "app")
         server = _table(document, "server")
-        telegram = _table(document, "telegram")
         calls = _table(document, "calls")
         module = _table(document, "module")
         network = _table(document, "network")
         logging_config = _table(document, "logging")
         security = _table(document, "security")
-        legacy_telegram_fields = {"personal_user_id", "admin_user_ids"} & set(telegram)
-        if legacy_telegram_fields:
-            raise ConfigurationError(
-                "replace telegram.personal_user_id/admin_user_ids with telegram.user_id"
-            )
-
         data_dir = _path(
             env.get("QDC507_DATA_DIR", app.get("data_dir", "/var/lib/qdc507-gateway")),
             base_dir,
@@ -215,28 +193,12 @@ class Settings:
             base_dir,
             "app.lock_path",
         )
-        session = _path(
-            env.get(
-                "QDC507_TELEGRAM_SESSION",
-                telegram.get("session", str(data_dir / "telegram.session")),
-            ),
-            base_dir,
-            "telegram.session",
-        )
-        bot_session = _path(
-            env.get(
-                "QDC507_TELEGRAM_BOT_SESSION",
-                telegram.get("bot_session", str(data_dir / "telegram-bot.session")),
-            ),
-            base_dir,
-            "telegram.bot_session",
-        )
         host = env.get("QDC507_HOST", server.get("host", "127.0.0.1"))
         if not isinstance(host, str) or not host.strip():
             raise ConfigurationError("server.host must be a non-empty string")
         frontend = env.get(
             "QDC507_INCOMING_CALL_FRONTEND",
-            calls.get("incoming_frontend", "telegram"),
+            calls.get("incoming_frontend", "app"),
         )
         if not isinstance(frontend, str):
             raise ConfigurationError("calls.incoming_frontend must be a string")
@@ -250,8 +212,9 @@ class Settings:
             raise ConfigurationError("logging.level must be a non-empty string")
 
         return cls(
+            allow_service_restart=_boolean(env.get("QDC507_ALLOW_SERVICE_RESTART", server.get("allow_service_restart", False)), "server.allow_service_restart"),
+            systemd_unit=env.get("QDC507_SYSTEMD_UNIT", server.get("systemd_unit", "djisimhub.service")),
             public_base_url=_optional_string(env.get("QDC507_PUBLIC_BASE_URL", server.get("public_base_url")), "server.public_base_url"),
-            telegram_sms_forwarding_enabled=_boolean(env.get("QDC507_TELEGRAM_SMS_FORWARDING_ENABLED", telegram.get("sms_forwarding_enabled", True)), "telegram.sms_forwarding_enabled"),
             apns_enabled=_boolean(env.get("QDC507_APNS_ENABLED", apns.get("enabled", False)), "apns.enabled"),
             apns_sandbox=_boolean(env.get("QDC507_APNS_SANDBOX", apns.get("sandbox", True)), "apns.sandbox"),
             apns_key_path=_optional_path(env.get("QDC507_APNS_KEY_PATH", apns.get("key_path")), base_dir, "apns.key_path"),
@@ -266,31 +229,6 @@ class Settings:
             ),
             host=host.strip(),
             port=port,
-            telegram_session=session,
-            telegram_bot_session=bot_session,
-            telegram_user_id=_optional_int(
-                env.get("QDC507_TELEGRAM_USER_ID", telegram.get("user_id")),
-                "telegram.user_id",
-            ),
-            telegram_api_id=_optional_int(
-                env.get("QDC507_TELEGRAM_API_ID", telegram.get("api_id")),
-                "telegram.api_id",
-            ),
-            telegram_api_hash=_optional_string(
-                env.get("QDC507_TELEGRAM_API_HASH", telegram.get("api_hash")),
-                "telegram.api_hash",
-            ),
-            telegram_bot_token=_optional_string(
-                env.get("QDC507_TELEGRAM_BOT_TOKEN", telegram.get("bot_token")),
-                "telegram.bot_token",
-            ),
-            telegram_allow_service_restart=_boolean(
-                env.get(
-                    "QDC507_TELEGRAM_ALLOW_SERVICE_RESTART",
-                    telegram.get("allow_service_restart", False),
-                ),
-                "telegram.allow_service_restart",
-            ),
             module_voice_manifest=_optional_path(
                 env.get("QDC507_MODULE_VOICE_MANIFEST", module.get("voice_manifest")),
                 base_dir,

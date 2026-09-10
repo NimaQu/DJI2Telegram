@@ -10,7 +10,7 @@ from qdc507_gateway.models import CallDirection, CallRecord, CallState, utc_now
 
 
 class ClientCallController:
-    """Cellular calls controlled by app or browser clients, independent of Telegram."""
+    """Cellular calls controlled by app or browser clients."""
 
     def __init__(
         self,
@@ -37,15 +37,16 @@ class ClientCallController:
         self._cellular_connected = False
         self._timeout_task: Optional[asyncio.Task] = None
         self._operation_lock = asyncio.Lock()
+        self.start_guard = lambda: None
         self._hangup_lock = asyncio.Lock()
         self._call_end_id: Optional[str] = None
         self._call_end_event: Optional[asyncio.Event] = None
 
     async def start_outbound(self, number: str, installation_id: Optional[str] = None) -> CallRecord:
         async with self._operation_lock:
+            self.start_guard()
             record = await self.coordinator.start_outbound(
                 number,
-                None,
                 frontend="app" if installation_id else "web",
                 initial_state=CallState.waiting_client,
             )
@@ -59,6 +60,7 @@ class ClientCallController:
 
     async def start_inbound(self, number: Optional[str], *, frontend: str = "web") -> CallRecord:
         async with self._operation_lock:
+            self.start_guard()
             current = await self.coordinator.current()
             if (
                 current is not None
@@ -71,7 +73,6 @@ class ClientCallController:
                 return current
             record = await self.coordinator.start_inbound(
                 number,
-                None,
                 frontend=frontend,
                 initial_state=CallState.ringing_cellular,
             )

@@ -69,8 +69,7 @@ CREATE TABLE IF NOT EXISTS call_records (
   direction TEXT NOT NULL,
   state TEXT NOT NULL,
   cellular_number TEXT,
-  telegram_user_id INTEGER,
-  frontend TEXT NOT NULL DEFAULT 'telegram',
+  frontend TEXT NOT NULL DEFAULT 'app',
   started_at TEXT NOT NULL,
   connected_at TEXT,
   ended_at TEXT,
@@ -155,7 +154,8 @@ class Database:
             self.connection.execute("INSERT INTO schema_migrations(name) VALUES (?)", (name,))
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def replace_token(self, token_hash: str, created_at: str) -> bool:
         """Replace the singleton API token and return whether one existed."""
@@ -276,12 +276,12 @@ class Database:
             self.connection.execute(
                 """
                 INSERT OR REPLACE INTO call_records(
-                  id, direction, state, cellular_number, telegram_user_id, frontend,
+                  id, direction, state, cellular_number, frontend,
                   started_at, connected_at, ended_at, last_error, owner_installation_id, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 tuple(scalar(values[key]) for key in (
-                    "id", "direction", "state", "cellular_number", "telegram_user_id", "frontend",
+                    "id", "direction", "state", "cellular_number", "frontend",
                     "started_at", "connected_at", "ended_at", "last_error", "owner_installation_id", "expires_at",
                 )),
             )
@@ -291,7 +291,7 @@ class Database:
         with self._lock:
             return list(self.connection.execute(
                 """
-                SELECT id, direction, state, cellular_number, telegram_user_id,
+                SELECT id, direction, state, cellular_number,
                        frontend, started_at, connected_at, ended_at, last_error, owner_installation_id, expires_at
                 FROM call_records
                 ORDER BY started_at DESC
@@ -410,7 +410,7 @@ class Database:
 
     def get_call(self, call_id: str):
         with self._lock:
-            return self.connection.execute("SELECT * FROM call_records WHERE id=?", (call_id,)).fetchone()
+            return self.connection.execute("SELECT id,direction,state,cellular_number,frontend,started_at,connected_at,ended_at,last_error,owner_installation_id,expires_at FROM call_records WHERE id=?", (call_id,)).fetchone()
 
     def register_voip_device(self, installation_id, token, environment, bundle_id):
         with self._lock, self.connection:

@@ -26,7 +26,6 @@ class CallCoordinator:
     async def start_outbound(
         self,
         number: str,
-        telegram_user_id: Optional[int] = None,
         *,
         frontend: str = "web",
         initial_state: CallState = CallState.waiting_client,
@@ -37,14 +36,13 @@ class CallCoordinator:
             self.active = CallRecord(
                 id=str(uuid.uuid4()), direction=CallDirection.outbound_cellular,
                 state=initial_state, cellular_number=number,
-                telegram_user_id=telegram_user_id, frontend=frontend,
+                frontend=frontend,
             )
             return self.active
 
     async def start_inbound(
         self,
         number: Optional[str],
-        telegram_user_id: Optional[int] = None,
         *,
         frontend: str = "web",
         initial_state: CallState = CallState.waiting_client,
@@ -55,7 +53,7 @@ class CallCoordinator:
             self.active = CallRecord(
                 id=str(uuid.uuid4()), direction=CallDirection.inbound_cellular,
                 state=initial_state, cellular_number=number,
-                telegram_user_id=telegram_user_id, frontend=frontend,
+                frontend=frontend,
             )
             return self.active
 

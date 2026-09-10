@@ -311,7 +311,6 @@ class LiveModuleService:
         self.locator = locator
         self.state = state
         self.sms_ingress = SMSIngress(database)
-        self.sms_forwarder: Optional[Callable[[dict[str, object]], Awaitable[Any]]] = None
         self._monitor_task: Optional[asyncio.Task] = None
         self._monitor_stop: Optional[asyncio.Event] = None
         self._monitor_session: Optional[LibUSBDeviceSession] = None
@@ -1010,14 +1009,6 @@ class LiveModuleService:
                 "sender": message["sender"],
                 "timestamp": message["timestamp"],
             }))
-            if self.sms_forwarder is not None:
-                try:
-                    await self.sms_forwarder(message)
-                except Exception as exc:
-                    await self.events.publish(GatewayEvent("sms.forward_error", {
-                        "id": message["id"],
-                        "error": type(exc).__name__,
-                    }))
         return message
 
     async def read_sms(self, index: int) -> Optional[dict[str, object]]:

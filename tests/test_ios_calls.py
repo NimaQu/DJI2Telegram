@@ -287,16 +287,10 @@ async def test_app_api_owner_guards_detail_and_outbound(settings, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_app_routing_never_notifies_telegram(settings, tmp_path, monkeypatch):
+async def test_app_incoming_routing(settings, tmp_path, monkeypatch):
     from qdc507_gateway import server
     async def noop(*args, **kwargs):
         return None
-    async def forbidden(*args, **kwargs):
-        pytest.fail('App incoming route touched Telegram')
-    monkeypatch.setattr(server.KurigramTelegramService, 'start', noop)
-    monkeypatch.setattr(server.KurigramTelegramService, 'stop', noop)
-    monkeypatch.setattr(server.KurigramTelegramService, 'notify_incoming_cellular_call', forbidden)
-    monkeypatch.setattr(server.KurigramTelegramService, 'request_private_call', forbidden)
     app = server.build_app(replace(settings, apns_enabled=False, data_dir=tmp_path / 'data'))
     handlers = {}
     async def start_monitor(**kwargs):

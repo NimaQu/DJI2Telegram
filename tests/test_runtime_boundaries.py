@@ -4,11 +4,6 @@ from qdc507_gateway.adb.transport import shell_service
 from qdc507_gateway.modem.at import ATSession
 from qdc507_gateway.modem.transport import choose_at_interface
 from qdc507_gateway.models import EndpointDescriptor, InterfaceDescriptor, USBDeviceSnapshot
-from qdc507_gateway.telegram.compatibility import (
-    probe_kurigram_client,
-    probe_kurigram_raw_phone_types,
-    probe_pytgcalls_bridge,
-)
 from qdc507_gateway.usb.owner import DeviceOwnerError, DeviceOwnerLock
 
 
@@ -74,22 +69,8 @@ def test_at_interface_selection_uses_descriptor_then_known_hint():
     assert choose_at_interface(device).number == 2
 
 
-def test_telegram_compatibility_boundaries():
-    class Client:
-        async def send_message(self, *_): pass
-        async def resolve_peer(self, *_): pass
-
-    assert probe_kurigram_client(Client()).passed
-    assert not probe_kurigram_client(object()).passed
-    assert probe_pytgcalls_bridge(type("Bridge", (), {
-        name: (lambda self, *args, **kwargs: None)
-        for name in ("request_call", "accept_call", "confirm_call", "send_signaling", "discard_call")
-    })()).passed
 
 
-def test_raw_phone_probe_is_callable_without_login():
-    report = probe_kurigram_raw_phone_types()
-    assert report.passed
 
 
 def test_adb_shell_service_rejects_nul():

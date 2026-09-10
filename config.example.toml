@@ -5,11 +5,13 @@ data_dir = "data"
 lock_path = "data/device.lock"
 
 [server]
-# false keeps the Telegram/module gateway running without opening any HTTP,
+# false keeps the module monitor running without opening any HTTP,
 # REST, SSE, WebSocket, OpenAPI, or static web-console listening socket.
 enabled = true
 host = "127.0.0.1"
 port = 8787
+allow_service_restart = false
+systemd_unit = "djisimhub.service"
 public_base_url = "https://djihub.fubuki.app"
 
 [logging]
@@ -25,20 +27,8 @@ auth_failure_window_seconds = 300
 auth_block_seconds = 900
 
 [calls]
-incoming_frontend = "app" # app (PushKit/CallKit), web, telegram, or auto
-# auto selects app when the HTTP server is enabled; otherwise telegram.
-
-[telegram]
-sms_forwarding_enabled = true # Set false to use APNs only for inbound SMS.
-session = "data/telegram.session"
-bot_session = "data/telegram-bot.session"
-# api_id = 123456
-# api_hash = "replace-me"
-# user_id = 123456789
-# bot_token = "123456789:replace-me"
-# Allows the single authorized Bot user to run /restart. This requires the
-# gateway process to run as root under dji2telegram.service.
-allow_service_restart = false
+incoming_frontend = "app" # app (PushKit/CallKit), web, or auto
+# auto selects app; use server.enabled=true for client calls.
 
 [module]
 # The first audio session validates kernel 3.18.44, hashes, module-side ALSA

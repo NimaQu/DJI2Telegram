@@ -56,7 +56,7 @@ def find_qdc507_pcm_devices(sysfs_root: str | Path = "/sys") -> tuple[AlsaPCMEnd
 
 
 def resample_pcm16_mono(data: bytes, source_rate: int, target_rate: int) -> bytes:
-    """Linear PCM16 mono conversion for the NTgCalls/ALSA boundary."""
+    """Linear PCM16 mono conversion for the client/ALSA boundary."""
     if source_rate <= 0 or target_rate <= 0 or len(data) % 2:
         raise ValueError("invalid PCM16 input or sample rate")
     if source_rate == target_rate:

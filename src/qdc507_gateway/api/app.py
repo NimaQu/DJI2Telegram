@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from qdc507_gateway import __version__
 from qdc507_gateway.events import EventBus
-from qdc507_gateway.calls.core import public_call_error
+from qdc507_gateway.calls.core import CallBridgeError, public_call_error
 from qdc507_gateway.models import GatewayEvent
 from qdc507_gateway.security import (
     AuthFailureLimiter,
@@ -59,7 +59,7 @@ async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
     iterator = events.subscribe()
     pending: asyncio.Task | None = None
     try:
-        yield ": DJI2Telegram stream connected\n\n"
+        yield ": djisimhub stream connected\n\n"
         while True:
             if pending is None:
                 pending = asyncio.create_task(anext(iterator))
@@ -92,7 +92,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
     except ImportError as exc:
         raise RuntimeError("FastAPI is required to create the REST application") from exc
 
-    app = FastAPI(title="DJI2Telegram", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="djisimhub", version=__version__, lifespan=lifespan)
     state = state if state is not None else {}
     auth_limiter = state.get("auth_limiter")
     if not isinstance(auth_limiter, AuthFailureLimiter):
@@ -171,7 +171,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
     @app.get("/api/v1/status")
     async def status(_: str = Depends(require_token)):
         current = state.get("get_status", state.get("status", {
-            "service": "DJI2Telegram", "module_state": "disconnected",
+            "service": "djisimhub", "module_state": "disconnected",
         }))
         if callable(current):
             current = current()
@@ -384,15 +384,43 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    @app.post("/api/v1/service/restart", status_code=202)
+    async def restart_service(_: str = Depends(require_token)):
+        handler = state.get("restart_service")
+        if handler is None:
+            raise HTTPException(status_code=503, detail="service restart is unavailable")
+        try:
+            return await handler()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except CallBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=type(exc).__name__) from exc
+
+    @app.post("/api/v1/module/restart")
+    async def restart_module(_: str = Depends(require_token)):
+        handler = state.get("restart_module")
+        if handler is None:
+            raise HTTPException(status_code=503, detail="module restart is unavailable")
+        try:
+            return {"accepted": True, "target": "module", "result": await handler()}
+        except CallBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=type(exc).__name__) from exc
+
     @app.post("/api/v1/module/at")
     async def at(payload: Dict[str, Any], _: str = Depends(require_token)):
         command_value = payload.get("command")
         if not isinstance(command_value, str):
             raise HTTPException(status_code=422, detail="command must be a string")
+        if any(ord(character) < 0x20 or ord(character) == 0x7f for character in command_value):
+            raise HTTPException(status_code=422, detail="command must be a single AT line")
         command = command_value.strip()
         if not command:
             raise HTTPException(status_code=422, detail="command is required")
-        if len(command) > 1024 or any(ord(character) < 0x20 for character in command):
+        if len(command) > 1024 or not command.upper().startswith("AT"):
             raise HTTPException(status_code=422, detail="command is invalid")
         try:
             command.encode("ascii")
@@ -413,8 +441,10 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             if hasattr(result, "__await__"):
                 result = await result
             return result
+        except CallBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail=type(exc).__name__) from exc
 
     @app.post("/api/v1/module/adb/authorize")
     async def authorize(payload: Dict[str, Any], _: str = Depends(require_token)):

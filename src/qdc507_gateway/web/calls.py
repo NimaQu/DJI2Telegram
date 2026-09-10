@@ -137,7 +137,7 @@ class WebAudioSession:
                 initial_frames = await self._receive_initial_audio(websocket)
                 await self.controller.attach_audio(call_id)
                 for frame in initial_frames:
-                    self.audio_adapter.pcm_bridge.push_telegram(frame)
+                    self.audio_adapter.pcm_bridge.push_client(frame)
             await self.stream(websocket, call_id, session_type="call")
         finally:
             await self.controller.websocket_disconnected(call_id)
@@ -241,7 +241,7 @@ class WebAudioSession:
     async def _send_audio(self, websocket: Any) -> None:
         pending = bytearray()
         while True:
-            frame = self.audio_adapter.pcm_bridge.pull_for_telegram()
+            frame = self.audio_adapter.pcm_bridge.pull_for_client()
             if frame is None:
                 await asyncio.sleep(0.005)
                 continue
@@ -276,7 +276,7 @@ class WebAudioSession:
                     await websocket.close(code=1003, reason="invalid PCM frame size")
                     return
                 for offset in range(0, len(data), AUDIO_FRAME_BYTES):
-                    accepted = self.audio_adapter.pcm_bridge.push_telegram(PCMFrame(
+                    accepted = self.audio_adapter.pcm_bridge.push_client(PCMFrame(
                         data[offset:offset + AUDIO_FRAME_BYTES],
                         AUDIO_SAMPLE_RATE,
                         AUDIO_CHANNELS,

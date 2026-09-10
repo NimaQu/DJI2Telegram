@@ -1,6 +1,6 @@
 # iOS PushKit / CallKit 通话对接
 
-来电使用独立的 PushKit VoIP token，经 APNs 唤起 App，由 App 向 CallKit 报告来电。接听、挂断及音频走 bridge 的 REST / SSE / WebSocket。App 通话核心位于 `calls/core.py`、`calls/controller.py`，不依赖 Telegram；Telegram 编排只保留在 `telegram/calls.py`。本次不实现 iOS App。
+来电使用独立的 PushKit VoIP token，经 APNs 唤起 App，由 App 向 CallKit 报告来电。接听、挂断及音频走 bridge 的 REST / SSE / WebSocket。App 通话核心位于 `calls/core.py`、`calls/controller.py`。本次不实现 iOS App。
 
 ## 配置与设备注册
 
@@ -15,7 +15,7 @@ public_base_url = "https://djihub.fubuki.app"
 incoming_frontend = "app"
 ```
 
-`app` 将蜂窝来电交给独立客户端，同时向已注册的 VoIP 设备发送来电邀请，不再调用 Telegram 来电通知或 Telegram 通话。`auto` 在 HTTP 服务开启时选择 `app`，关闭时选择 `telegram`；`web` 保留原浏览器音频接听流程。没有 VoIP 设备时，app 来电仍可通过事件流发现；无人接听 60 秒后结束，不回退到 Telegram。
+`app` 将蜂窝来电交给独立客户端，同时向已注册的 VoIP 设备发送来电邀请。`auto` 选择 `app`；客户端通话需要启用 HTTP 服务；`web` 保留原浏览器音频接听流程。没有 VoIP 设备时，app 来电仍可通过事件流发现；无人接听 60 秒后结束。
 
 沿用 `[apns]` 的 `enabled`、`sandbox`、`key_path`、`key_id`、`team_id`、`bundle_id`，不用另外配置密钥。Apple 签名密钥需支持目标环境和 `<bundle_id>.voip` topic。普通通知 token 与 PushKit token 不可互换。
 
@@ -101,7 +101,7 @@ WebSocket 首个服务端 JSON 为 `ready`，包含音频格式：PCM16 little-e
 
 `GET /api/v1/calls/current` 返回当前客户端通话或 null；`GET /api/v1/calls/{call_id}` 返回指定通话，包括已结束记录，不存在返回 404。`GET /api/v1/calls` 是历史列表。
 
-记录和 SSE 的 `call.state` 包括：`id`、`direction`、`state`、`cellular_number`、`frontend`、`owner_installation_id`、`started_at`、`connected_at`、`ended_at`、`expires_at`、`last_error`。旧数据中的 Telegram 元数据暂时保留，App 无需使用。状态为：
+记录和 SSE 的 `call.state` 包括：`id`、`direction`、`state`、`cellular_number`、`frontend`、`owner_installation_id`、`started_at`、`connected_at`、`ended_at`、`expires_at`、`last_error`。状态为：
 
 - `ringing_cellular`：正在响铃。
 - `waiting_client`：已认领，等待音频；呼出时表示已创建呼叫，等待音频后拨号。
@@ -139,6 +139,6 @@ Content-Type: application/json
 
 ## 部署验证范围
 
-自动化测试覆盖双 token 独立更新、VoIP 请求参数与取消、抢接互斥、归属票据、音频不等待首帧、历史状态及 Telegram 隔离。实际 PushKit 唤醒、CallKit 操作顺序、音频路由及公网双向语音需要配合 iOS App 和真实来电进行验收。
+自动化测试覆盖双 token 独立更新、VoIP 请求参数与取消、抢接互斥、归属票据、音频不等待首帧、历史状态及音频生命周期。实际 PushKit 唤醒、CallKit 操作顺序、音频路由及公网双向语音需要配合 iOS App 和真实来电进行验收。
 
 参考：[Apple PushKit 来电处理](https://developer.apple.com/documentation/pushkit/responding-to-voip-notifications-from-pushkit)、[CallKit 音频激活](https://developer.apple.com/documentation/callkit/cxproviderdelegate/provider%28_%3Adidactivate%3A%29)。

@@ -14,4 +14,4 @@
 
 验证命令：`.venv/bin/pytest -q`、`.venv/bin/ruff check src tests`、`git diff --check`。
 
-边界：自动化测试不能替代真实 QDC507 USB 重枚举、蜂窝通话和 Telegram 音频联调。未进行部署。GatewayRuntime 的内部 Python 接口发生变化：构造函数不再接收 database，调用方直接使用 probe_once(reason="startup"/"reconnect")；仓库内调用已同步修改，仓库外调用方需同步适配。
+边界：自动化测试不能替代真实 QDC507 USB 重枚举、蜂窝通话和 客户端音频联调。未进行部署。GatewayRuntime 的内部 Python 接口发生变化：构造函数不再接收 database，调用方直接使用 probe_once(reason="startup"/"reconnect")；仓库内调用已同步修改，仓库外调用方需同步适配。

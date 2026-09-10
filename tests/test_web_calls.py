@@ -98,12 +98,12 @@ def test_websocket_requires_browser_pcm_before_attaching_audio_and_dialing():
             def __init__(self):
                 self.received = []
 
-            def push_telegram(self, frame):
+            def push_client(self, frame):
                 self.received.append(frame)
                 return True
 
             @staticmethod
-            def pull_for_telegram():
+            def pull_for_client():
                 return None
 
         class Adapter:
@@ -185,11 +185,11 @@ def test_websocket_stream_stops_when_cellular_call_ends_first():
 
         class Bridge:
             @staticmethod
-            def push_telegram(_frame):
+            def push_client(_frame):
                 return True
 
             @staticmethod
-            def pull_for_telegram():
+            def pull_for_client():
                 return None
 
         class Adapter:
@@ -446,7 +446,7 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     assert web_response.headers["cache-control"] == "no-store, no-cache, must-revalidate"
     assert web_response.headers["pragma"] == "no-cache"
     web_page = web_response.text
-    assert "DJI2Telegram" in web_page
+    assert "djisimhub" in web_page
     assert "localStorage" in web_page
     assert 'href="/web/styles.css?v=0.4.0"' in web_page
     assert 'src="/web/app.js?v=0.4.1"' in web_page
@@ -470,7 +470,6 @@ def test_web_api_call_control_static_ui_and_one_time_websocket_ticket():
     assert "事件流断开，正在自动重连" in web_script
     assert "eventLoopGeneration" in web_script
     assert "renderSignal(module.connected ? module.signal : null)" in web_script
-    assert 'Bot ${status.telegram_bot_state || "disabled"}' in web_script
     assert 'labels = ["未采样", "极弱", "较弱", "一般", "良好", "很强"]' in web_script
     assert "answerIncomingCall" not in web_script
     assert "/answer" not in web_script

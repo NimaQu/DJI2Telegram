@@ -18,13 +18,13 @@ def test_event_bus_persists_gateway_events_in_order():
             )
 
         events = EventBus(persist=persist)
-        await events.publish(GatewayEvent("telegram.connected", {"account_user_id": 42}))
+        await events.publish(GatewayEvent("module.connected", {"device_id": 42}))
         await events.publish(GatewayEvent("audio.state", {"running": False}))
         rows = database.connection.execute(
             "SELECT event_type, payload FROM module_events ORDER BY id"
         ).fetchall()
 
-        assert [row["event_type"] for row in rows] == ["telegram.connected", "audio.state"]
-        assert json.loads(rows[0]["payload"])["account_user_id"] == 42
+        assert [row["event_type"] for row in rows] == ["module.connected", "audio.state"]
+        assert json.loads(rows[0]["payload"])["device_id"] == 42
 
     asyncio.run(run())

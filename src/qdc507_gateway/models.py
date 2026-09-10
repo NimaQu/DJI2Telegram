@@ -21,7 +21,6 @@ class ModuleState(str, Enum):
 class CallState(str, Enum):
     idle = "idle"
     waiting_client = "waiting_client"
-    waiting_telegram = "waiting_telegram"
     waiting_cellular = "waiting_cellular"
     ringing_cellular = "ringing_cellular"
     active = "active"
@@ -200,8 +199,7 @@ class CallRecord:
     direction: CallDirection
     state: CallState
     cellular_number: Optional[str] = None
-    telegram_user_id: Optional[int] = None
-    frontend: str = "telegram"
+    frontend: str = "app"
     started_at: datetime = field(default_factory=utc_now)
     connected_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None

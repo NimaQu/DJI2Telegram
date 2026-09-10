@@ -12,7 +12,6 @@ def test_call_status_monitor_marks_answered_call_active_and_stops_polling():
         coordinator = CallCoordinator()
         record = await coordinator.start_outbound(
             "+16479178964",
-            None,
             frontend="web",
             initial_state=CallState.waiting_cellular,
         )

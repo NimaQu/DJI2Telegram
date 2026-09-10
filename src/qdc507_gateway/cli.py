@@ -5,7 +5,6 @@ import asyncio
 import datetime as dt
 import json
 import sys
-from pathlib import Path
 
 from qdc507_gateway.config import PROJECT_CONFIG_FILE, Settings
 from qdc507_gateway.models import USBProbeReport
@@ -59,36 +58,6 @@ def _token_delete(_args: argparse.Namespace, settings: Settings) -> int:
     finally:
         database.close()
     print(json.dumps({"deleted": deleted}, indent=2))
-    return 0
-
-
-def _telegram_login(args: argparse.Namespace, settings: Settings) -> int:
-    from qdc507_gateway.telegram.kurigram import create_kurigram_client, ensure_session_permissions
-
-    api_id = args.api_id or settings.telegram_api_id
-    api_hash = args.api_hash or settings.telegram_api_hash
-    if not api_id or not api_hash:
-        raise SystemExit(
-            "telegram-login requires telegram.api_id and telegram.api_hash in config.toml "
-            "or --api-id/--api-hash"
-        )
-    session_path = Path(args.session).expanduser() if args.session else settings.telegram_session
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    session_path.parent.chmod(0o700)
-    client = create_kurigram_client(
-        session_path.stem,
-        int(api_id),
-        api_hash,
-        session_path.parent,
-    )
-
-    async def login():
-        await client.start()
-        await client.stop()
-
-    asyncio.run(login())
-    ensure_session_permissions(session_path)
-    print(f"Telegram session ready: {session_path}")
     return 0
 
 
@@ -217,6 +186,8 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
             "public_base_url": settings.public_base_url,
             "host": settings.host,
             "port": settings.port,
+            "allow_service_restart": settings.allow_service_restart,
+            "systemd_unit": settings.systemd_unit,
         },
         "network": {"apn": settings.network_apn, "pdp_type": settings.network_pdp_type},
         "logging": {"level": settings.log_level},
@@ -224,18 +195,6 @@ def _config_check(_args: argparse.Namespace, settings: Settings) -> int:
             "auth_max_failures": settings.auth_max_failures,
             "auth_failure_window_seconds": settings.auth_failure_window_seconds,
             "auth_block_seconds": settings.auth_block_seconds,
-        },
-        "telegram": {
-            "configured": bool(
-                settings.telegram_api_id
-                and settings.telegram_api_hash
-                and settings.telegram_user_id
-            ),
-            "session": str(settings.telegram_session),
-            "user_id": settings.telegram_user_id,
-            "bot_configured": bool(settings.telegram_bot_token),
-            "bot_session": str(settings.telegram_bot_session),
-            "allow_service_restart": settings.telegram_allow_service_restart,
         },
         "incoming_call_frontend": settings.incoming_call_frontend,
     }
@@ -250,7 +209,7 @@ def _serve(_args: argparse.Namespace, settings: Settings) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="dji2telegram")
+    parser = argparse.ArgumentParser(prog="djisimhub")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     serve = subparsers.add_parser("serve", help="run the gateway service (HTTP optional)")
@@ -272,12 +231,6 @@ def main(argv=None) -> int:
         help="delete the API token and disable authenticated API access",
     )
     token_delete.set_defaults(handler=_token_delete)
-
-    telegram = subparsers.add_parser("telegram-login", help="create a Kurigram User API session")
-    telegram.add_argument("--api-id", type=int)
-    telegram.add_argument("--api-hash")
-    telegram.add_argument("--session")
-    telegram.set_defaults(handler=_telegram_login)
 
     adb_authorize = subparsers.add_parser(
         "adb-authorize",

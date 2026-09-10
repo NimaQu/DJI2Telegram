@@ -56,13 +56,10 @@ key_path="key.p8"
 key_id="KEY123"
 team_id="TEAM123"
 bundle_id="app.test"
-[telegram]
-sms_forwarding_enabled=false
 ''')
     loaded = Settings.load(config, environ={'QDC507_APNS_SANDBOX': 'false'})
     assert loaded.apns_key_path == settings.apns_key_path
     assert not loaded.apns_sandbox
-    assert not loaded.telegram_sms_forwarding_enabled
     assert loaded.public_base_url == 'https://djihub.fubuki.app'
     with pytest.raises(ConfigurationError):
         Settings(apns_enabled=True)
@@ -288,22 +285,6 @@ async def test_worker_lifecycle_recovers_persisted_jobs(settings):
     assert service.task is None and service.client.is_closed
 
 
-def test_telegram_sms_switch_preserves_other_callbacks(tmp_path, monkeypatch):
-    from qdc507_gateway import server
-    services = []
-    original = server.KurigramTelegramService
-    def factory(*args, **kwargs):
-        service = original(*args, **kwargs)
-        services.append(service)
-        return service
-    monkeypatch.setattr(server, 'KurigramTelegramService', factory)
-    for enabled in (False, True):
-        app = server.build_app(Settings(data_dir=tmp_path / str(enabled), telegram_sms_forwarding_enabled=enabled))
-        module = app.state.gateway_module_service
-        assert (module.sms_forwarder is not None) == enabled
-        assert services[-1].send_sms_callback == module.send_sms
-        module.close()
-        app.state.gateway_database.close()
 
 
 def test_mutable_content_is_inside_aps_and_included_in_size_budget():

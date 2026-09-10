@@ -21,8 +21,6 @@ sandbox = true
 # team_id = "APPLE_TEAM_ID"
 # bundle_id = "your.app.bundle"
 
-[telegram]
-sms_forwarding_enabled = false
 ```
 
 `public_base_url` 是客户端入口信息，不会自动创建 DNS、TLS 证书或 Cloudflare 隧道，也不影响监听地址。预期 cloudflared 将 `https://djihub.fubuki.app` 转发到 `http://127.0.0.1:8787`。隧道中不要加入要求交互式网页登录的规则，除非 App 另外实现对应认证。
@@ -31,9 +29,9 @@ sms_forwarding_enabled = false
 
 `sandbox=true` 使用 `api.sandbox.push.apple.com`；`false` 使用 `api.push.apple.com`。App 的签名环境与 APNs token 必须匹配服务器环境（例如开发签名与 TestFlight 的环境不同），密钥也必须支持所选环境和 topic。环境或 Bundle ID 变更需重启，旧注册被停用，App 必须重新注册。
 
-配置支持环境变量覆盖：`QDC507_PUBLIC_BASE_URL`、`QDC507_TELEGRAM_SMS_FORWARDING_ENABLED`、`QDC507_APNS_ENABLED`、`QDC507_APNS_SANDBOX`、`QDC507_APNS_KEY_PATH`、`QDC507_APNS_KEY_ID`、`QDC507_APNS_TEAM_ID`、`QDC507_APNS_BUNDLE_ID`。
+配置支持环境变量覆盖：`QDC507_PUBLIC_BASE_URL`、`QDC507_APNS_ENABLED`、`QDC507_APNS_SANDBOX`、`QDC507_APNS_KEY_PATH`、`QDC507_APNS_KEY_ID`、`QDC507_APNS_TEAM_ID`、`QDC507_APNS_BUNDLE_ID`。
 
-代码默认保留 Telegram 短信转发，部署配置明确关闭它。APNs 关闭期间短信仍保存，不产生 APNs 新任务，不在随后启用时补推历史短信。
+APNs 关闭期间短信仍保存，不产生 APNs 新任务，不在随后启用时补推历史短信。
 
 ## App 注册流程
 

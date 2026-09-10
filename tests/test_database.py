@@ -13,7 +13,6 @@ def test_call_records_are_persisted_with_enum_and_datetime_values():
         direction=CallDirection.outbound_cellular,
         state=CallState.active,
         cellular_number="+12045550100",
-        telegram_user_id=42,
         started_at=started,
         connected_at=started,
     )
@@ -26,7 +25,6 @@ def test_call_records_are_persisted_with_enum_and_datetime_values():
     assert row["direction"] == "outbound_cellular"
     assert row["state"] == "active"
     assert row["started_at"] == started.isoformat()
-    assert row["telegram_user_id"] == 42
 
 
 def test_file_database_and_parent_are_private(tmp_path):

@@ -61,7 +61,6 @@ def test_status_can_include_live_transport_state():
         "get_status": lambda: {
             "service": "test",
             "module_state": "connected",
-            "telegram_state": "disabled",
             "audio": {"bridge": {"running": False}},
         },
     }
@@ -70,7 +69,6 @@ def test_status_can_include_live_transport_state():
         "/api/v1/status", headers={"Authorization": "Bearer " + token}
     )
     assert response.status_code == 200
-    assert response.json()["telegram_state"] == "disabled"
     assert response.json()["audio"]["bridge"]["running"] is False
 
 

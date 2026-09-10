@@ -42,7 +42,7 @@ def test_disabled_server_selects_headless_runner(monkeypatch, tmp_path):
     settings = Settings(
         data_dir=tmp_path,
         lock_path=tmp_path / "device.lock",
-        web_enabled=False,
+        web_enabled=False, incoming_call_frontend="auto",
     )
     assert server.run(settings) == 0
     assert started == [app]
@@ -52,7 +52,7 @@ def test_disabled_server_selects_headless_runner(monkeypatch, tmp_path):
 # releasing the USB device and database after partial startup or failed shutdown.
 @pytest.mark.parametrize("failure", [
     None, "startup", "diagnostic", "hangup", "monitor", "module",
-    "telegram", "runtime", "apns", "database",
+    "runtime", "apns", "database",
 ])
 def test_gateway_cleanup_continues_after_failure(monkeypatch, tmp_path, failure):
     transitions = []
@@ -74,16 +74,14 @@ def test_gateway_cleanup_continues_after_failure(monkeypatch, tmp_path, failure)
 
     monkeypatch.setattr(server.APNsService, "start", async_step("startup"))
     monkeypatch.setattr(server.GatewayRuntime, "probe_once", async_step("probe"))
-    monkeypatch.setattr(server.KurigramTelegramService, "start", async_step("telegram_start"))
     monkeypatch.setattr(server.LiveModuleService, "start_monitor", async_step("monitor_start"))
     monkeypatch.setattr(server, "monitor_cellular_call_status", idle)
     monkeypatch.setattr(server.LiveModuleService, "signal", idle)
     monkeypatch.setattr(server.LiveModuleService, "network_status", idle)
     for cls, method, name in (
         (server.WebAudioDiagnosticService, "stop", "diagnostic"),
-        (server.CallBridgeOrchestrator, "hangup", "hangup"),
+        (server.ClientCallController, "hangup", "hangup"),
         (server.LiveModuleService, "stop_monitor", "monitor"),
-        (server.KurigramTelegramService, "stop", "telegram"),
         (server.GatewayRuntime, "stop", "runtime"),
         (server.APNsService, "stop", "apns"),
     ):
@@ -108,7 +106,7 @@ def test_gateway_cleanup_continues_after_failure(monkeypatch, tmp_path, failure)
             asyncio.run(scenario())
     else:
         asyncio.run(scenario())
-    assert transitions[-8:] == [
+    assert transitions[-7:] == [
         "diagnostic", "hangup", "monitor", "module",
-        "telegram", "runtime", "apns", "database",
+        "runtime", "apns", "database",
     ]

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
-  <title>DJI2Telegram 控制台</title>
+  <title>djisimhub 控制台</title>
   <link rel="stylesheet" href="/web/styles.css?v=0.4.0">
 </head>
 <body>
@@ -12,8 +12,8 @@
     <header>
       <div>
         <p class="eyebrow">LINUX HEADLESS GATEWAY</p>
-        <h1>DJI2Telegram</h1>
-        <p class="subtitle">直接验证蜂窝短信、呼叫控制与双向 UAC 音频，不经过 Telegram。</p>
+        <h1>djisimhub</h1>
+        <p class="subtitle">直接验证蜂窝短信、呼叫控制与双向 UAC 音频。</p>
       </div>
       <div id="connectionBadge" class="badge neutral">未连接 API</div>
     </header>
@@ -54,11 +54,6 @@
         <strong id="audioState">未连接</strong>
         <small>PCM16 · 8 kHz · mono · 20 ms</small>
       </article>
-      <article class="metric">
-        <span>Telegram User / Bot</span>
-        <strong id="telegramState">未知</strong>
-        <small>User 负责通话，Bot 负责消息与命令</small>
-      </article>
     </section>
 
     <section class="work-grid">
@@ -81,7 +76,7 @@
           <button id="muteButton" class="secondary" disabled>麦克风静音</button>
           <button id="refreshButton" class="ghost">刷新状态</button>
         </div>
-        <p id="audioHint" class="hint">建议佩戴耳机，避免浏览器扬声器声音回灌到麦克风。“仅测试双向音频”不会执行 ATD；真实出站呼叫只有在 WebSocket 和 ALSA 都就绪后才会拨号。蜂窝来电由 Telegram 或独立 API 客户端处理，网页不提供接听功能。</p>
+        <p id="audioHint" class="hint">建议佩戴耳机，避免浏览器扬声器声音回灌到麦克风。“仅测试双向音频”不会执行 ATD；真实出站呼叫只有在 WebSocket 和 ALSA 都就绪后才会拨号。蜂窝来电由 App处理，网页不提供接听功能。</p>
       </article>
 
       <article class="panel">

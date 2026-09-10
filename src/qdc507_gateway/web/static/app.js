@@ -1,7 +1,7 @@
 const elements = Object.fromEntries([
   "token", "connectButton", "connectionBadge", "moduleState", "moduleIdentity",
   "signalDbm", "signalQuality", "signalBars", "signalMeta",
-  "callState", "callNumber", "callFrontend", "audioState", "telegramState", "audioHint",
+  "callState", "callNumber", "callFrontend", "audioState", "audioHint",
   "phoneNumber", "startCallButton", "hangupButton", "muteButton",
   "diagnosticButton", "refreshButton", "smsNumber", "smsText", "smsLength", "sendSmsButton", "smsResult",
   "refreshSmsButton", "smsInbox", "eventLog", "clearEventsButton",
@@ -83,7 +83,7 @@ function renderCall(call) {
   } else {
     elements.callState.textContent = call.state;
     elements.callNumber.textContent = call.cellular_number || "号码未知";
-    elements.callFrontend.textContent = call.frontend || "telegram";
+    elements.callFrontend.textContent = call.frontend || "app";
   }
   const outboundWeb = call?.frontend === "web" && call.direction === "outbound_cellular";
   elements.startCallButton.disabled = Boolean(call) || Boolean(diagnosticSession) || !browserAudioSupported;
@@ -119,10 +119,6 @@ async function refreshStatus() {
   elements.moduleState.textContent = status.module_state || (module.connected ? "connected" : "disconnected");
   elements.moduleIdentity.textContent = module.identity || "—";
   renderSignal(module.connected ? module.signal : null);
-  elements.telegramState.textContent = (
-    `User ${status.telegram_state || "disabled"} · `
-    + `Bot ${status.telegram_bot_state || "disabled"}`
-  );
   const mode = status.audio?.mode;
   elements.audioState.textContent = status.audio_diagnostic_active
     ? "诊断模式已连接"

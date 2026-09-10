@@ -1,20 +1,17 @@
-# DJI2Telegram
+# djisimhub
 
-DJI2Telegram 是 QDC507 的 Linux 无界面短信与语音网关，通过 USB 连接模块，提供 Telegram Bot、私人语音通话、网页控制台和 API。
+djisimhub 是 QDC507 的 Linux 短信与语音网关，通过 USB 连接模块，为 iOS App 和网页客户端提供 REST、SSE 与双向 PCM 音频。
 
-## 功能
+- 短信：PDU 去重和分段拼接，仅保留最新 100 条；APNs 推送与客户端全局 ACK。
+- 通话：PushKit 来电邀请、CallKit 接听归属、呼出、挂断和 WebSocket 音频。
+- 维护：自定义 AT 命令、模块重启和 systemd 服务重启。
+- 鉴权：单用户 Bearer API token、失败限流；设备注册同时管理短信和 VoIP token。
 
-- **短信**：接收、保存和转发短信，通过 Bot 确认后发送短信，或使用网页/API 发送。
-- **通话**：Telegram 私人语音通话桥、来电通知，以及网页拨号、挂断和双向音频。
-- **模块状态**：查看手机号、运营商、网络制式、信号强度和 LTE 小区信息。
-- **历史与接口**：SQLite 保存短信、通话和事件；提供 REST API、SSE 事件流和音频 WebSocket。
-- **访问控制**：Bot 仅允许指定用户操作；API 使用 Token 认证，并对连续认证失败的来源临时封禁。
-- **iOS APNs 推送**：可将入站短信直接推送至已注册的 iOS 设备，默认关闭。启用需配置 `.p8` 私钥、Key ID、Team ID、Bundle ID 和推送环境；可单独关闭 Telegram 短信转发。详见 [iOS APNs 对接文档](docs/ios-apns.md)。
-- **后台运行**：支持 systemd 自启动、journald 日志和可配置日志等级。
+对接文档：[短信](docs/ios-apns.md)、[iOS 通话](docs/ios-calls.md)、[AT 与重启](docs/maintenance-api.md)。
 
 ## 安装教程
 
-以下以 Debian 13（trixie）为例，项目安装到 `/root/DJI2Telegram`，服务以 root 运行。配置读取项目根目录的 `config.toml`，运行数据默认保存在 `data/`。
+以下以 Debian 13（trixie）为例，项目安装到 `/root/djisimhub`，服务以 root 运行。配置读取项目根目录的 `config.toml`，运行数据默认保存在 `data/`。
 
 ### 1. 检查内核
 
@@ -55,8 +52,8 @@ apt-get install -y \
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh \
   | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
-git clone https://github.com/NimaQu/DJI2Telegram.git /root/DJI2Telegram
-cd /root/DJI2Telegram
+git clone https://github.com/NimaQu/djisimhub.git /root/djisimhub
+cd /root/djisimhub
 /usr/local/bin/uv sync --frozen
 cp config.example.toml config.toml
 mkdir -p -m 0700 data
@@ -70,17 +67,17 @@ chmod 0600 config.toml
 确认没有其他服务或程序（如 adb、MaVo、DJOneHub）占用模块，然后执行：
 
 ```sh
-cd /root/DJI2Telegram
+cd /root/djisimhub
 /usr/local/bin/uv run --frozen python gateway.py module-setup --confirm
 ```
 
 命令会自动识别原始或已转换的模块，备份原设置，完成 USB、ADB、IMS 和语音运行时初始化及自检；需要时重启模块，等待重新枚举。备份保存在 `data/module-backups/`，已就绪的模块不会重复写入或重启。
 
-如果按 USB ID 直通导致模块转换后消失，将直通改为物理端口或 `2c7c:0125`，再运行同一命令。已有部署重新初始化前，先执行 `systemctl stop dji2telegram.service`。
+如果按 USB ID 直通导致模块转换后消失，将直通改为物理端口或 `2c7c:0125`，再运行同一命令。已有部署重新初始化前，先执行 `systemctl stop djisimhub.service`。
 
-### 4. 修改配置文件
+### 4. 配置与启动
 
-编辑 `/root/DJI2Telegram/config.toml` 中的对应字段，不要重复添加已有配置表：
+编辑 `config.toml` 中已有配置表：
 
 ```toml
 [server]
@@ -88,28 +85,14 @@ enabled = true
 host = "127.0.0.1"
 port = 8787
 public_base_url = "https://gateway.example.com"
+allow_service_restart = true
+systemd_unit = "djisimhub.service"
 
 [calls]
-incoming_frontend = "telegram"
-
-[telegram]
-sms_forwarding_enabled = true
-session = "data/telegram.session"
-bot_session = "data/telegram-bot.session"
-api_id = 123456
-api_hash = "replace-me"
-user_id = 123456789
-bot_token = "123456789:replace-me"
-allow_service_restart = false
+incoming_frontend = "app"
 ```
 
-- `api_id`、`api_hash`：填写 Telegram 应用凭据。
-- `bot_token`：填写 Bot 的 Token。
-- `user_id`：唯一允许操作 Bot、接收短信和接听电话的个人账号 ID。
-- User session 必须登录**另一个 Telegram 账号**，由这个网关账号呼叫你的个人账号。
-- `public_base_url`：改成自己的 HTTPS 域名；它不会自动配置 DNS、证书或隧道。
-
-保留示例中的 `[app]`、`[module]` 等配置；相对路径以配置文件所在目录为基准。仅使用 Telegram 时可设置 `server.enabled = false`，关闭网页和 API。
+保留 `[app]`、`[module]` 和 `[apns]` 设置。相对路径以配置文件目录为基准；现有 `QDC507_*` 环境变量仍可覆盖对应配置。API 路径和 iOS 通话协议保持不变。
 
 如运营商要求手动 APN，修改已有 `[network]` 配置：
 
@@ -131,57 +114,36 @@ pdp_type = "IP" # IP / IPV6 / IPV4V6
 /usr/local/bin/uv run --frozen python gateway.py config-check
 ```
 
-### 5. 登录 Telegram session
+### 5. 前台验证
 
 ```sh
-cd /root/DJI2Telegram
-/usr/local/bin/uv run --frozen python gateway.py telegram-login
+uv run --frozen djisimhub serve
 ```
 
-按提示输入**网关账号**的手机号、验证码和两步验证密码。Bot 使用 `bot_token` 自动登录，无需单独交互登录。
+在另一个终端检查 `http://127.0.0.1:8787/openapi.json`，确认日志出现 `module.connected`。停止前台进程后安装 systemd 服务。
 
-### 6. 前台启动测试
-
-```sh
-/usr/local/bin/uv run --frozen python gateway.py serve
-```
-
-确认日志中的模块和 Telegram 连接正常，然后用 `telegram.user_id` 对应的个人账号：
-
-1. 向 Bot 发送 `/start`，再用 `/status` 查看状态。
-2. 等日志出现 `telegram.connected` 后，向**网关 User 账号**发送一条新的普通私聊消息，建立通话所需的 peer 缓存。每次新建或重新登录 session 后都要执行；否则通话可能报 `PeerIdInvalid`。
-3. 用 `/call <号码>` 测试通话：先接通 Telegram，再由模块拨号。
-
-启用 HTTP 时，可在另一个终端检查服务：
+### 6. systemd 部署
 
 ```sh
-curl -fsS http://127.0.0.1:8787/openapi.json > /dev/null
-```
-
-确认无误后按 `Ctrl+C` 停止前台服务。
-
-### 7. systemd 部署
-
-```sh
-cd /root/DJI2Telegram
-cp dji2telegram.example.service /etc/systemd/system/dji2telegram.service
+cd /root/djisimhub
+cp djisimhub.example.service /etc/systemd/system/djisimhub.service
 systemctl daemon-reload
-systemctl enable --now dji2telegram.service
-systemctl --no-pager --full status dji2telegram.service
+systemctl enable --now djisimhub.service
+systemctl --no-pager --full status djisimhub.service
 ```
 
-模板默认以 root 运行，项目路径为 `/root/DJI2Telegram`，uv 路径为 `/usr/local/bin/uv`；使用其他路径时先修改模板。服务每次启动前自动检查配置，修改配置后执行：
+模板默认以 root 运行，项目路径为 `/root/djisimhub`，uv 路径为 `/usr/local/bin/uv`；使用其他路径时先修改模板。服务每次启动前自动检查配置，修改配置后执行：
 
 ```sh
-systemctl restart dji2telegram.service
+systemctl restart djisimhub.service
 ```
 
-### 8. 获取 API Token
+### 7. 获取 API Token
 
 需要使用网页或 API 时执行：
 
 ```sh
-cd /root/DJI2Telegram
+cd /root/djisimhub
 /usr/local/bin/uv run --frozen python gateway.py token
 ```
 
@@ -194,7 +156,7 @@ curl -H 'Authorization: Bearer <token>' \
 
 需要撤销 Token 时执行 `uv run --frozen python gateway.py token-delete`；此操作不会关闭 HTTP 服务。
 
-### 9. 配置 HTTPS 域名
+### 8. 配置 HTTPS 域名
 
 远程访问网页/API 需要准备一个可信的 **HTTPS 域名**，浏览器通话也需要 HTTPS 才能使用麦克风。项目不内置 TLS，建议使用 **cloudflared（Cloudflare Tunnel）**。
 
@@ -202,31 +164,13 @@ curl -H 'Authorization: Bearer <token>' \
 
 完成后访问 `https://gateway.example.com/web/`，输入 API Token。代理需支持 SSE 和 WebSocket；iOS/API 客户端入口不要加入交互式网页登录规则，除非客户端已实现对应认证。
 
-## Bot 命令
-
-仅配置的 `telegram.user_id` 可使用：
-
-| 命令 | 用途 |
-|---|---|
-| `/status` | 查看模块、网络、Telegram、通话和音频状态 |
-| `/call <号码>` | 先接通 Telegram，再由模块拨号 |
-| `/sendsms <号码>` | 创建短信草稿，回复内容后通过按钮确认发送 |
-| `/sendat` | 回复 AT 命令，通过按钮确认执行 |
-| `/restartmodule`、`/rebootmodule` | 确认后重启模块 |
-| `/hangup` | 挂断当前通话 |
-| `/userlogin` | 按提示重新登录 User session |
-| `/cancel` | 取消短信草稿、AT 命令或登录流程 |
-| `/restart` | 重启 systemd 服务，需启用 `telegram.allow_service_restart` |
-
-User session 失效时 Bot 仍可在线，通过 `/userlogin` 恢复；有 SSH 时优先使用 `telegram-login`。登录流程 10 分钟后过期，通话期间不能重登。`/restart` 适用于上述 root systemd 部署，启用选项后需先手动重启一次服务。
-
 ## API 文档
 
 网页入口为 `/web/`，交互式 API 文档为 `/docs`，完整 OpenAPI 定义为 `/openapi.json`。REST API 使用 `Authorization: Bearer <token>` 认证。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/api/v1/status` | 网关、Telegram、音频和当前通话状态 |
+| GET | `/api/v1/status` | 网关、音频和当前通话状态 |
 | GET | `/api/v1/module` | 缓存的模块和网络状态；加 `?refresh=true` 在空闲时刷新 |
 | GET | `/api/v1/sms` | 短信列表 |
 | GET | `/api/v1/sms/{id}` | 单条短信 |
@@ -251,24 +195,18 @@ User session 失效时 Bot 仍可在线，通过 `/userlogin` 恢复；有 SSH �
 
 ```sh
 # 实时查看
-journalctl -u dji2telegram.service -f -o short-iso
+journalctl -u djisimhub.service -f -o short-iso
 
 # 最近 100 条
-journalctl -u dji2telegram.service -n 100 --no-pager
+journalctl -u djisimhub.service -n 100 --no-pager
 ```
 
 默认日志等级为 `INFO`。排障时将 `config.toml` 中 `[logging].level` 改为 `"DEBUG"`，重启服务后导出：
 
 ```sh
-systemctl restart dji2telegram.service
-journalctl -u dji2telegram.service --since "10 minutes ago" \
-  -o short-iso --no-pager > dji2telegram-debug.log
+systemctl restart djisimhub.service
+journalctl -u djisimhub.service --since "10 minutes ago" \
+  -o short-iso --no-pager > djisimhub-debug.log
 ```
 
 排障后恢复 `INFO`。分享日志前遮盖电话号码等个人信息。
-
-## iOS PushKit / CallKit 通话
-
-设置 `calls.incoming_frontend = "app"` 可将蜂窝来电交给 App，绕过 Telegram 来电通知和通话编排。设备注册共用原 PUT / DELETE 接口，支持独立更新 `device_token`、`voip_token`。来电采用短时 VoIP 邀请；接听归属、音频票据与状态查询通过 REST/SSE 实现。
-
-参见 [iOS 通话对接文档](docs/ios-calls.md)，包括多设备抢接、CallKit 激活音频时序、WebSocket PCM 格式和呼出流程。`auto` 在 HTTP 服务开启时选择 App，否则选择 Telegram。
