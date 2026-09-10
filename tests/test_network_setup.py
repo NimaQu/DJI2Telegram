@@ -107,12 +107,11 @@ def test_apn_validation_prevents_at_injection(value):
         Settings(network_apn=value)
 
 
-def test_empty_apn_survives_toml_and_environment(tmp_path):
+def test_empty_apn_survives_toml(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text('[network]\napn=""\npdp_type="IPV4V6"\n')
-    settings = Settings.load(path, environ={})
+    settings = Settings.load(path)
     assert settings.network_apn == "" and settings.network_pdp_type == "IPV4V6"
-    assert Settings.load(path, environ={"QDC507_NETWORK_APN": "connect"}).network_apn == "connect"
 
 
 def test_network_setup_requires_confirmation_before_loading_config(tmp_path, monkeypatch):

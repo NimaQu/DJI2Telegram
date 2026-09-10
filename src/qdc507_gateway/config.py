@@ -152,29 +152,18 @@ class Settings:
     @classmethod
     def load(
         cls,
-        path: str | os.PathLike[str] | None = None,
-        environ: Mapping[str, str] | None = None,
+        path: str | os.PathLike[str] = PROJECT_CONFIG_FILE,
     ) -> "Settings":
-        """Load project TOML with environment variables retained as overrides."""
-        env = os.environ if environ is None else environ
-        requested = path or env.get("QDC507_CONFIG")
-        config_path: Path | None
-        if requested:
-            config_path = Path(requested).expanduser().resolve()
-            if not config_path.is_file():
-                raise ConfigurationError(f"configuration file not found: {config_path}")
-        else:
-            candidate = (Path.cwd() / "config.toml").resolve()
-            config_path = candidate if candidate.is_file() else None
-
-        document: Mapping[str, Any] = {}
-        if config_path is not None:
-            try:
-                with config_path.open("rb") as handle:
-                    document = tomllib.load(handle)
-            except tomllib.TOMLDecodeError as exc:
-                raise ConfigurationError(f"invalid TOML in {config_path}: {exc}") from exc
-        base_dir = config_path.parent if config_path is not None else Path.cwd()
+        """Read configuration exclusively from TOML, resolving paths beside it."""
+        config_path = Path(path).expanduser().resolve()
+        if not config_path.is_file():
+            raise ConfigurationError(f"configuration file not found: {config_path}")
+        try:
+            with config_path.open("rb") as handle:
+                document = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigurationError(f"invalid TOML in {config_path}: {exc}") from exc
+        base_dir = config_path.parent
         apns = _table(document, "apns")
         app = _table(document, "app")
         server = _table(document, "server")
@@ -184,85 +173,73 @@ class Settings:
         logging_config = _table(document, "logging")
         security = _table(document, "security")
         data_dir = _path(
-            env.get("QDC507_DATA_DIR", app.get("data_dir", "/var/lib/qdc507-gateway")),
+            app.get("data_dir", "/var/lib/qdc507-gateway"),
             base_dir,
             "app.data_dir",
         )
         lock_path = _path(
-            env.get("QDC507_LOCK_PATH", app.get("lock_path", str(data_dir / "device.lock"))),
+            app.get("lock_path", str(data_dir / "device.lock")),
             base_dir,
             "app.lock_path",
         )
-        host = env.get("QDC507_HOST", server.get("host", "127.0.0.1"))
+        host = server.get("host", "127.0.0.1")
         if not isinstance(host, str) or not host.strip():
             raise ConfigurationError("server.host must be a non-empty string")
-        frontend = env.get(
-            "QDC507_INCOMING_CALL_FRONTEND",
-            calls.get("incoming_frontend", "app"),
-        )
+        frontend = calls.get("incoming_frontend", "app")
         if not isinstance(frontend, str):
             raise ConfigurationError("calls.incoming_frontend must be a string")
 
         try:
-            port = int(env.get("QDC507_PORT", server.get("port", 8787)))
+            port = int(server.get("port", 8787))
         except (TypeError, ValueError) as exc:
             raise ConfigurationError("server.port must be an integer") from exc
-        log_level_value = env.get("QDC507_LOG_LEVEL", logging_config.get("level", "INFO"))
+        log_level_value = logging_config.get("level", "INFO")
         if not isinstance(log_level_value, str) or not log_level_value.strip():
             raise ConfigurationError("logging.level must be a non-empty string")
 
         return cls(
-            allow_service_restart=_boolean(env.get("QDC507_ALLOW_SERVICE_RESTART", server.get("allow_service_restart", False)), "server.allow_service_restart"),
-            systemd_unit=env.get("QDC507_SYSTEMD_UNIT", server.get("systemd_unit", "djisimhub.service")),
-            public_base_url=_optional_string(env.get("QDC507_PUBLIC_BASE_URL", server.get("public_base_url")), "server.public_base_url"),
-            apns_enabled=_boolean(env.get("QDC507_APNS_ENABLED", apns.get("enabled", False)), "apns.enabled"),
-            apns_sandbox=_boolean(env.get("QDC507_APNS_SANDBOX", apns.get("sandbox", True)), "apns.sandbox"),
-            apns_key_path=_optional_path(env.get("QDC507_APNS_KEY_PATH", apns.get("key_path")), base_dir, "apns.key_path"),
-            apns_key_id=_optional_string(env.get("QDC507_APNS_KEY_ID", apns.get("key_id")), "apns.key_id"),
-            apns_team_id=_optional_string(env.get("QDC507_APNS_TEAM_ID", apns.get("team_id")), "apns.team_id"),
-            apns_bundle_id=_optional_string(env.get("QDC507_APNS_BUNDLE_ID", apns.get("bundle_id")), "apns.bundle_id"),
+            allow_service_restart=_boolean(server.get("allow_service_restart", False), "server.allow_service_restart"),
+            systemd_unit=server.get("systemd_unit", "djisimhub.service"),
+            public_base_url=_optional_string(server.get("public_base_url"), "server.public_base_url"),
+            apns_enabled=_boolean(apns.get("enabled", False), "apns.enabled"),
+            apns_sandbox=_boolean(apns.get("sandbox", True), "apns.sandbox"),
+            apns_key_path=_optional_path(apns.get("key_path"), base_dir, "apns.key_path"),
+            apns_key_id=_optional_string(apns.get("key_id"), "apns.key_id"),
+            apns_team_id=_optional_string(apns.get("team_id"), "apns.team_id"),
+            apns_bundle_id=_optional_string(apns.get("bundle_id"), "apns.bundle_id"),
             data_dir=data_dir,
             lock_path=lock_path,
             web_enabled=_boolean(
-                env.get("QDC507_SERVER_ENABLED", server.get("enabled", True)),
+                server.get("enabled", True),
                 "server.enabled",
             ),
             host=host.strip(),
             port=port,
             module_voice_manifest=_optional_path(
-                env.get("QDC507_MODULE_VOICE_MANIFEST", module.get("voice_manifest")),
+                module.get("voice_manifest"),
                 base_dir,
                 "module.voice_manifest",
             ),
             module_voice_resource_dir=_optional_path(
-                env.get("QDC507_MODULE_VOICE_RESOURCE_DIR", module.get("voice_resource_dir")),
+                module.get("voice_resource_dir"),
                 base_dir,
                 "module.voice_resource_dir",
             ),
             incoming_call_frontend=frontend.strip().lower(),
             log_level=log_level_value.strip().upper(),
             auth_max_failures=_positive_int(
-                env.get(
-                    "QDC507_AUTH_MAX_FAILURES",
-                    security.get("auth_max_failures", 10),
-                ),
+                security.get("auth_max_failures", 10),
                 "security.auth_max_failures",
             ),
             auth_failure_window_seconds=_positive_int(
-                env.get(
-                    "QDC507_AUTH_FAILURE_WINDOW_SECONDS",
-                    security.get("auth_failure_window_seconds", 300),
-                ),
+                security.get("auth_failure_window_seconds", 300),
                 "security.auth_failure_window_seconds",
             ),
             auth_block_seconds=_positive_int(
-                env.get(
-                    "QDC507_AUTH_BLOCK_SECONDS",
-                    security.get("auth_block_seconds", 900),
-                ),
+                security.get("auth_block_seconds", 900),
                 "security.auth_block_seconds",
             ),
             config_path=config_path,
-            network_apn=env.get("QDC507_NETWORK_APN", network.get("apn")),
-            network_pdp_type=env.get("QDC507_NETWORK_PDP_TYPE", network.get("pdp_type", "IP")),
+            network_apn=network.get("apn"),
+            network_pdp_type=network.get("pdp_type", "IP"),
         )

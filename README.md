@@ -92,7 +92,7 @@ systemd_unit = "djisimhub.service"
 incoming_frontend = "app"
 ```
 
-保留 `[app]`、`[module]` 和 `[apns]` 设置。相对路径以配置文件目录为基准；现有 `QDC507_*` 环境变量仍可覆盖对应配置。API 路径和 iOS 通话协议保持不变。
+保留 `[app]`、`[module]` 和 `[apns]` 设置。相对路径以配置文件目录为基准；配置仅从 `config.toml` 读取，不支持环境变量覆盖；缺少配置文件时启动失败，省略的字段使用代码默认值。API 路径和 iOS 通话协议保持不变。
 
 如运营商要求手动 APN，修改已有 `[network]` 配置：
 

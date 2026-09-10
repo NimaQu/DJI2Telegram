@@ -17,7 +17,7 @@ class DeviceOwnerLock:
     """
 
     def __init__(self, path: str | os.PathLike[str] | None = None):
-        self.path = Path(path or os.getenv("QDC507_LOCK_PATH", "/run/qdc507-gateway/device.lock"))
+        self.path = Path(path or "/run/qdc507-gateway/device.lock")
         self._fd: Optional[int] = None
 
     @property

@@ -29,7 +29,7 @@ sandbox = true
 
 `sandbox=true` 使用 `api.sandbox.push.apple.com`；`false` 使用 `api.push.apple.com`。App 的签名环境与 APNs token 必须匹配服务器环境（例如开发签名与 TestFlight 的环境不同），密钥也必须支持所选环境和 topic。环境或 Bundle ID 变更需重启，旧注册被停用，App 必须重新注册。
 
-配置支持环境变量覆盖：`QDC507_PUBLIC_BASE_URL`、`QDC507_APNS_ENABLED`、`QDC507_APNS_SANDBOX`、`QDC507_APNS_KEY_PATH`、`QDC507_APNS_KEY_ID`、`QDC507_APNS_TEAM_ID`、`QDC507_APNS_BUNDLE_ID`。
+配置仅从 `config.toml` 读取，不支持环境变量覆盖。
 
 APNs 关闭期间短信仍保存，不产生 APNs 新任务，不在随后启用时补推历史短信。
 

@@ -57,9 +57,9 @@ key_id="KEY123"
 team_id="TEAM123"
 bundle_id="app.test"
 ''')
-    loaded = Settings.load(config, environ={'QDC507_APNS_SANDBOX': 'false'})
+    loaded = Settings.load(config)
     assert loaded.apns_key_path == settings.apns_key_path
-    assert not loaded.apns_sandbox
+    assert loaded.apns_sandbox
     assert loaded.public_base_url == 'https://djihub.fubuki.app'
     with pytest.raises(ConfigurationError):
         Settings(apns_enabled=True)

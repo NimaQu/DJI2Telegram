@@ -121,12 +121,8 @@ async def test_restart_exec_uses_fixed_argv_and_recovers_from_failure(monkeypatc
 def test_restart_config_and_no_messaging_dependencies(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text('[server]\nallow_service_restart=true\nsystemd_unit="custom.service"\n')
-    settings = Settings.load(config, environ={})
+    settings = Settings.load(config)
     assert settings.allow_service_restart and settings.systemd_unit == "custom.service"
-    assert (
-        Settings.load(config, environ={"QDC507_SYSTEMD_UNIT": "djisimhub.service"}).systemd_unit
-        == "djisimhub.service"
-    )
     with pytest.raises(ConfigurationError):
         Settings(systemd_unit="anything; reboot")
 

@@ -39,7 +39,7 @@ allow_service_restart = true
 systemd_unit = "djisimhub.service"
 ```
 
-环境变量覆盖：`QDC507_ALLOW_SERVICE_RESTART`、`QDC507_SYSTEMD_UNIT`。默认关闭；systemd unit 从配置读取，客户端不能提交 shell 命令或服务名称。进程需要具备重启该 unit 的权限。
+仅从 `config.toml` 读取。默认关闭；systemd unit 从配置读取，客户端不能提交 shell 命令或服务名称。进程需要具备重启该 unit 的权限。
 
 ```sh
 curl -X POST "$ENDPOINT/api/v1/service/restart" \
