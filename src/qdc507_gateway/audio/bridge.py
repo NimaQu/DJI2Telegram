@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+import threading
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from .alsa import AlsaPCMDevice, ALSAUnavailable, find_qdc507_pcm_devices
 from .ring import PCMFrame, RingBuffer
+from .jitter import PlaybackJitterBuffer
 from qdc507_gateway.models import GatewayEvent
 
 
@@ -19,9 +21,12 @@ class PCMBridge:
     memory when one leg stops consuming frames.
     """
 
-    def __init__(self, capacity: int = 50):
+    def __init__(self, capacity: int = 50, playback_capacity: int | None = None):
         self.cellular_to_client = RingBuffer(capacity)
-        self.client_to_cellular = RingBuffer(capacity)
+        playback_capacity = playback_capacity or capacity
+        self.client_to_cellular = PlaybackJitterBuffer(
+            playback_capacity, min(3, playback_capacity), min(6, playback_capacity),
+        )
         self.running = False
 
     async def start(self, _call_id=None) -> None:
@@ -79,13 +84,12 @@ class AlsaAudioAdapter:
         module_runtime: Any = None,
     ):
         self.sysfs_root = sysfs_root
-        # Ten 20 ms frames cap one-way queueing at about 200 ms. A one-second
-        # buffer made browser-to-cellular latency approach 1,000 ms under
-        # normal WebAudio jitter and is not useful for an interactive call.
-        self.pcm_bridge = PCMBridge(capacity=10)
+        # Capture stays low latency. Playback starts with 60 ms of reserve,
+        # grows to 120 ms after starvation and tolerates a 200 ms packet burst.
+        self.pcm_bridge = PCMBridge(capacity=10, playback_capacity=20)
         self.alsa: Optional[AlsaPCMDevice] = None
-        self._tasks: list[asyncio.Task] = []
-        self._stop = asyncio.Event()
+        self._workers: list[threading.Thread] = []
+        self._stop = threading.Event()
         self._event_publisher = event_publisher
         self.module_runtime = module_runtime
         self._module_runtime_started = False
@@ -133,10 +137,12 @@ class AlsaAudioAdapter:
         await self.pcm_bridge.start()
         self._mode = mode
         self._session_started_at = time.monotonic()
-        self._tasks = [
-            asyncio.create_task(self._capture_loop()),
-            asyncio.create_task(self._playback_loop()),
+        self._workers = [
+            threading.Thread(target=self._capture_worker, name="audio-capture", daemon=True),
+            threading.Thread(target=self._playback_worker, name="audio-playback", daemon=True),
         ]
+        for worker in self._workers:
+            worker.start()
         await self._publish("audio.state", {
             "state": "active",
             "mode": mode,
@@ -157,11 +163,12 @@ class AlsaAudioAdapter:
         )
         self._stop.set()
         await self.pcm_bridge.stop()
-        for task in self._tasks:
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
+        # Never close ALSA while a background read/write still owns its handle.
+        for worker in self._workers:
+            await asyncio.to_thread(worker.join, 2.0)
+        if any(worker.is_alive() for worker in self._workers):
+            raise ALSAUnavailable("audio workers did not stop; restart the gateway")
+        self._workers.clear()
         errors: list[tuple[str, Exception]] = []
         session_summary = None
         if was_active:
@@ -242,34 +249,29 @@ class AlsaAudioAdapter:
             return status()
         return {"configured": True, "active": self._module_runtime_started}
 
-    async def _capture_loop(self) -> None:
+    def _capture_worker(self) -> None:
         while not self._stop.is_set():
             try:
-                frame = await asyncio.to_thread(self.alsa.read)
-                self.pcm_bridge.push_cellular(frame)
-            except asyncio.CancelledError:
-                return
+                frame = self.alsa.read()
+                if frame.data:
+                    self.pcm_bridge.push_cellular(frame)
+                else:
+                    self._stop.wait(0.001)
             except Exception:
                 self.pcm_bridge.record_xrun("cellular_to_client")
-                await asyncio.sleep(0.005)
+                self._stop.wait(0.005)
 
-    async def _playback_loop(self) -> None:
+    def _playback_worker(self) -> None:
         while not self._stop.is_set():
             try:
                 frame = self.pcm_bridge.pull_for_cellular()
                 if frame is None:
-                    # A UAC playback PCM underruns if browser/WebRTC jitter
-                    # leaves even a short gap. The blocking ALSA write is also
-                    # our 20 ms clock, so fill a missing period with silence
-                    # instead of letting the device repeatedly stop/recover.
-                    await asyncio.to_thread(self.alsa.write_silence)
-                    continue
-                await asyncio.to_thread(self.alsa.write, frame)
-            except asyncio.CancelledError:
-                return
+                    self.alsa.write_silence()
+                else:
+                    self.alsa.write(frame)
             except Exception:
                 self.pcm_bridge.record_xrun("client_to_cellular")
-                await asyncio.sleep(0.005)
+                self._stop.wait(0.005)
 
     def stats(self) -> dict[str, object]:
         return {

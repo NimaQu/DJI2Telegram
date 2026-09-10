@@ -2,7 +2,7 @@
 
 These files are a read-only copy of the existing `mavo/Resources/ModuleVoice`
 artifacts. The gateway does not load them at startup. Set
-`QDC507_MODULE_VOICE_MANIFEST` and `QDC507_MODULE_VOICE_RESOURCE_DIR` only
+`module.voice_manifest` and `module.voice_resource_dir` in `config.toml` only
 after verifying the module kernel release, ALSA device layout, and artifact
 hashes against the target device.
 

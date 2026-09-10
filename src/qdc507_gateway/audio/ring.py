@@ -29,6 +29,10 @@ class RingBuffer:
         self.nonzero_samples = 0
         self.max_latency_ms = 0.0
         self._started_at = time.monotonic()
+        self._last_frame_at: Optional[float] = None
+        self.max_interarrival_ms = 0.0
+        self.gaps_over_40ms = 0
+        self.audio_received_ms = 0.0
         self._first_frame_at: Optional[float] = None
         self._first_nonzero_at: Optional[float] = None
         self._sample_rates: set[int] = set()
@@ -38,6 +42,13 @@ class RingBuffer:
     def put(self, frame: PCMFrame) -> None:
         with self._lock:
             now = time.monotonic()
+            if self._last_frame_at is not None:
+                gap_ms = max(0.0, now - self._last_frame_at) * 1000
+                self.max_interarrival_ms = max(self.max_interarrival_ms, gap_ms)
+                if gap_ms > 40:
+                    self.gaps_over_40ms += 1
+            self._last_frame_at = now
+            self.audio_received_ms += len(frame.data) * 1000 / max(1, frame.sample_rate * frame.channels * frame.sample_width)
             if self._first_frame_at is None:
                 self._first_frame_at = now
             if len(self._items) >= self.capacity:
@@ -95,6 +106,10 @@ class RingBuffer:
             self.nonzero_samples = 0
             self.max_latency_ms = 0.0
             self._started_at = time.monotonic()
+            self._last_frame_at = None
+            self.max_interarrival_ms = 0.0
+            self.gaps_over_40ms = 0
+            self.audio_received_ms = 0.0
             self._first_frame_at = None
             self._first_nonzero_at = None
             self._sample_rates.clear()
@@ -105,6 +120,12 @@ class RingBuffer:
         with self._lock:
             return {
                 "dropped": self.dropped,
+                "max_interarrival_ms": round(self.max_interarrival_ms, 3),
+                "gaps_over_40ms": self.gaps_over_40ms,
+                "audio_received_ms": round(self.audio_received_ms, 3),
+                "last_frame_ms": None if self._last_frame_at is None else round(
+                    (self._last_frame_at - self._started_at) * 1000, 3,
+                ),
                 "xruns": self.xruns,
                 "frames_in": self.frames_in,
                 "frames_out": self.frames_out,

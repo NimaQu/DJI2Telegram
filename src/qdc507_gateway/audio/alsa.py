@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import re
 import struct
 import time
@@ -92,6 +93,9 @@ class AlsaPCMDevice:
         self.capture = None
         self.playback = None
         self.xruns = 0
+        self.playback_recoveries = 0
+        self.partial_writes = 0
+        self.write_failures = 0
         self.frames_read = 0
         self.frames_written = 0
         self.nonzero_samples = 0
@@ -141,11 +145,35 @@ class AlsaPCMDevice:
         if frame.channels != 1 or frame.sample_width != 2:
             raise ALSAUnavailable("only PCM16 mono audio is supported")
         data = resample_pcm16_mono(frame.data, frame.sample_rate, 8000)
-        written = self.playback.write(data)
-        if isinstance(written, int) and written < 0:
-            self.xruns += 1
-            raise ALSAUnavailable("ALSA playback xrun")
-        self.frames_written += len(data) // 2
+        offset = 0
+        recoveries = 0
+        deadline = time.monotonic() + 0.2
+        while offset < len(data):
+            written = self.playback.write(data[offset:])
+            if not isinstance(written, int):
+                self.write_failures += 1
+                raise ALSAUnavailable("invalid ALSA playback result")
+            if written == -errno.EPIPE:
+                self.xruns += 1
+                recoveries += 1
+                if recoveries <= 3 and time.monotonic() < deadline:
+                    # pyalsaaudio prepares the stream after EPIPE but writes no
+                    # samples. Retry the SAME bytes instead of losing this frame.
+                    self.playback_recoveries += 1
+                    continue
+            if written < 0 or written * 2 > len(data) - offset:
+                self.write_failures += 1
+                raise ALSAUnavailable("ALSA playback write failed")
+            if written == 0:
+                if time.monotonic() >= deadline:
+                    self.write_failures += 1
+                    raise ALSAUnavailable("ALSA playback stalled")
+                time.sleep(0.001)
+                continue
+            if written * 2 < len(data) - offset:
+                self.partial_writes += 1
+            offset += written * 2
+            self.frames_written += written
 
     def write_silence(self) -> None:
         """Keep the UAC playback clock running while the remote leg is idle."""
@@ -156,6 +184,9 @@ class AlsaPCMDevice:
         opened_at = self._opened_at
         return {
             "xruns": self.xruns,
+            "playback_recoveries": self.playback_recoveries,
+            "partial_writes": self.partial_writes,
+            "write_failures": self.write_failures,
             "frames_read": self.frames_read,
             "frames_written": self.frames_written,
             "nonzero_samples": self.nonzero_samples,
