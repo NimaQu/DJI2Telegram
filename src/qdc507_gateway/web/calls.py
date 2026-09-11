@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from starlette.websockets import WebSocketDisconnect
 
-from qdc507_gateway.audio.alsa import resample_pcm16_mono
+from qdc507_gateway.audio.alsa import resample_pcm16_mono, scale_pcm16
 from qdc507_gateway.audio.ring import PCMFrame
 from qdc507_gateway.calls.core import CallBridgeError, CallCoordinator
 from qdc507_gateway.calls.controller import ClientCallController as WebCallController
@@ -114,8 +114,10 @@ class WebAudioSession:
         controller: WebCallController,
         audio_adapter: Any,
         startup_timeout_seconds: float = 3.0,
+        audio_gain: float = 1.0,
     ):
         self.controller = controller
+        self.audio_gain = audio_gain
         self.audio_adapter = audio_adapter
         self.startup_timeout_seconds = startup_timeout_seconds
         self.frames_to_browser = 0
@@ -137,7 +139,10 @@ class WebAudioSession:
                 initial_frames = await self._receive_initial_audio(websocket)
                 await self.controller.attach_audio(call_id)
                 for frame in initial_frames:
-                    self.audio_adapter.pcm_bridge.push_client(frame)
+                    self.audio_adapter.pcm_bridge.push_client(PCMFrame(
+                        scale_pcm16(frame.data, self.audio_gain), frame.sample_rate,
+                        frame.channels, frame.sample_width, frame.captured_at,
+                    ))
             await self.stream(websocket, call_id, session_type="call")
         finally:
             await self.controller.websocket_disconnected(call_id)
@@ -256,7 +261,7 @@ class WebAudioSession:
             while len(pending) >= AUDIO_FRAME_BYTES:
                 chunk = bytes(pending[:AUDIO_FRAME_BYTES])
                 del pending[:AUDIO_FRAME_BYTES]
-                await websocket.send_bytes(chunk)
+                await websocket.send_bytes(scale_pcm16(chunk, self.audio_gain))
                 self.frames_to_browser += 1
 
     async def _receive_audio(self, websocket: Any) -> None:
@@ -275,6 +280,7 @@ class WebAudioSession:
                     self.invalid_messages += 1
                     await websocket.close(code=1003, reason="invalid PCM frame size")
                     return
+                data = scale_pcm16(data, self.audio_gain)
                 for offset in range(0, len(data), AUDIO_FRAME_BYTES):
                     accepted = self.audio_adapter.pcm_bridge.push_client(PCMFrame(
                         data[offset:offset + AUDIO_FRAME_BYTES],

@@ -56,6 +56,16 @@ def find_qdc507_pcm_devices(sysfs_root: str | Path = "/sys") -> tuple[AlsaPCMEnd
     return tuple(result)
 
 
+def scale_pcm16(data: bytes, gain: float) -> bytes:
+    """Attenuate signed little-endian PCM16 without changing timing or format."""
+    if gain == 1.0:
+        return data
+    if gain == 0.0:
+        return bytes(len(data))
+    return b"".join(struct.pack("<h", round(value * gain))
+                    for (value,) in struct.iter_unpack("<h", data))
+
+
 def resample_pcm16_mono(data: bytes, source_rate: int, target_rate: int) -> bytes:
     """Linear PCM16 mono conversion for the client/ALSA boundary."""
     if source_rate <= 0 or target_rate <= 0 or len(data) % 2:

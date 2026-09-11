@@ -79,6 +79,7 @@ class Settings:
     module_voice_manifest: Path | None = None
     module_voice_resource_dir: Path | None = None
     incoming_call_frontend: str = "app"
+    audio_gain: float = 1.0
     log_level: str = "INFO"
     auth_max_failures: int = 10
     auth_failure_window_seconds: int = 300
@@ -96,6 +97,8 @@ class Settings:
     apns_bundle_id: str | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.audio_gain, bool) or not isinstance(self.audio_gain, (int, float)) or not 0 <= self.audio_gain <= 1:
+            raise ConfigurationError("calls.audio_gain must be a number between 0 and 1")
         if not isinstance(self.systemd_unit, str) or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@-]*\.service", self.systemd_unit) is None:
             raise ConfigurationError("server.systemd_unit must be a systemd service name")
         if self.public_base_url:
@@ -226,6 +229,7 @@ class Settings:
                 "module.voice_resource_dir",
             ),
             incoming_call_frontend=frontend.strip().lower(),
+            audio_gain=calls.get("audio_gain", 1.0),
             log_level=log_level_value.strip().upper(),
             auth_max_failures=_positive_int(
                 security.get("auth_max_failures", 10),

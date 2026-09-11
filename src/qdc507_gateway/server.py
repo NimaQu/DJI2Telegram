@@ -158,7 +158,7 @@ def build_app(settings: Optional[Settings] = None):
         record_sink=record_call,
     )
     audio_tickets = AudioTicketStore()
-    web_audio_session = WebAudioSession(web_call_controller, audio_adapter)
+    web_audio_session = WebAudioSession(web_call_controller, audio_adapter, audio_gain=settings.audio_gain)
     web_audio_diagnostic = WebAudioDiagnosticService(
         call_coordinator,
         audio_adapter,
