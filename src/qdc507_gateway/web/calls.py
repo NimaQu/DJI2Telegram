@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from starlette.websockets import WebSocketDisconnect
 
+from qdc507_gateway.audio.recording import DebugRecordings
 from qdc507_gateway.audio.alsa import resample_pcm16_mono
 from qdc507_gateway.audio.ring import PCMFrame
 from qdc507_gateway.calls.core import CallBridgeError, CallCoordinator
@@ -114,6 +115,7 @@ class WebAudioSession:
         controller: WebCallController,
         audio_adapter: Any,
         startup_timeout_seconds: float = 3.0,
+        debug_recording_enabled: bool = False,
     ):
         self.controller = controller
         self.audio_adapter = audio_adapter
@@ -121,6 +123,7 @@ class WebAudioSession:
         self.frames_to_browser = 0
         self.frames_from_browser = 0
         self.invalid_messages = 0
+        self.recordings = DebugRecordings(debug_recording_enabled)
 
     async def run(self, websocket: Any, call_id: str, installation_id: Optional[str] = None) -> None:
         reserve = getattr(self.controller, "reserve_audio", None)
@@ -128,6 +131,7 @@ class WebAudioSession:
             # Reservation fails before the cleanup block: a second socket must
             # never hang up the first socket's call.
             await reserve(call_id, installation_id)
+        self.recordings.start(call_id)
         try:
             if installation_id is not None:
                 # CallKit has activated AVAudioSession; do not wait for a PCM
@@ -137,9 +141,12 @@ class WebAudioSession:
                 initial_frames = await self._receive_initial_audio(websocket)
                 await self.controller.attach_audio(call_id)
                 for frame in initial_frames:
+                    self.recordings.append(call_id, "client_to_bridge", frame.data)
                     self.audio_adapter.pcm_bridge.push_client(frame)
             await self.stream(websocket, call_id, session_type="call")
         finally:
+            if call_id in self.recordings.records:
+                self.recordings.stop(call_id)
             await self.controller.websocket_disconnected(call_id)
 
     async def _receive_initial_audio(self, websocket: Any) -> list[PCMFrame]:
@@ -206,8 +213,8 @@ class WebAudioSession:
                 "frame_bytes": AUDIO_FRAME_BYTES,
             },
         })
-        sender = asyncio.create_task(self._send_audio(websocket))
-        receiver = asyncio.create_task(self._receive_audio(websocket))
+        sender = asyncio.create_task(self._send_audio(websocket, session_id))
+        receiver = asyncio.create_task(self._receive_audio(websocket, session_id))
         call_ended = None
         wait_ended = getattr(self.controller, "wait_ended", None)
         if session_type == "call" and callable(wait_ended):
@@ -238,7 +245,7 @@ class WebAudioSession:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _send_audio(self, websocket: Any) -> None:
+    async def _send_audio(self, websocket: Any, session_id=None) -> None:
         pending = bytearray()
         while True:
             frame = self.audio_adapter.pcm_bridge.pull_for_client()
@@ -257,9 +264,10 @@ class WebAudioSession:
                 chunk = bytes(pending[:AUDIO_FRAME_BYTES])
                 del pending[:AUDIO_FRAME_BYTES]
                 await websocket.send_bytes(chunk)
+                self.recordings.append(session_id, "bridge_to_client", chunk)
                 self.frames_to_browser += 1
 
-    async def _receive_audio(self, websocket: Any) -> None:
+    async def _receive_audio(self, websocket: Any, session_id=None) -> None:
         while True:
             message = await websocket.receive()
             message_type = message.get("type")
@@ -275,6 +283,7 @@ class WebAudioSession:
                     self.invalid_messages += 1
                     await websocket.close(code=1003, reason="invalid PCM frame size")
                     return
+                self.recordings.append(session_id, "client_to_bridge", data)
                 for offset in range(0, len(data), AUDIO_FRAME_BYTES):
                     accepted = self.audio_adapter.pcm_bridge.push_client(PCMFrame(
                         data[offset:offset + AUDIO_FRAME_BYTES],

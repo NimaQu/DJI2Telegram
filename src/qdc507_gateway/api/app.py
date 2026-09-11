@@ -320,6 +320,38 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    def recordings_for(call_id):
+        recordings = state.get("recordings")
+        if recordings is None or call_id not in recordings.records:
+            raise HTTPException(status_code=404, detail="recording not found")
+        return recordings
+
+    @app.get("/api/v1/audio/recordings")
+    async def list_recordings(_: str = Depends(require_token)):
+        recordings = state.get("recordings")
+        return {"enabled": bool(recordings and recordings.enabled),
+                "recordings": [recordings.status(key) for key in recordings.records] if recordings else []}
+
+    @app.get("/api/v1/calls/{call_id}/recording")
+    async def recording_status(call_id: str, _: str = Depends(require_token)):
+        return recordings_for(call_id).status(call_id)
+
+    @app.get("/api/v1/calls/{call_id}/recording/{direction}.wav")
+    async def download_recording(call_id: str, direction: str, _: str = Depends(require_token)):
+        from fastapi.responses import Response
+        recordings = recordings_for(call_id)
+        if direction not in recordings.DIRECTIONS:
+            raise HTTPException(status_code=422, detail="invalid recording direction")
+        data = recordings.snapshot(call_id, direction)
+        wav = await asyncio.to_thread(recordings.wav, data)
+        return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/v1/calls/{call_id}/recording", status_code=204)
+    async def delete_recording(call_id: str, _: str = Depends(require_token)):
+        recordings = state.get("recordings")
+        if recordings is not None:
+            recordings.records.pop(call_id, None)
+
     @app.post("/api/v1/calls/{call_id}/dtmf")
     async def send_dtmf(call_id: str, payload: CallDTMF, _: str = Depends(require_token)):
         handler = state.get("send_dtmf")

@@ -168,3 +168,39 @@ Content-Type: application/json
 服务不可用返回 `503`；模块拒绝、超时等失败返回 `502`。**不自动重试**：超时可能意味着按键已发出，重复提交会输入两次。`accepted` 仅表示模块返回 OK，不保证对端 IVR 已识别；远端实际挂断与状态上报之间也可能存在短暂延迟。服务不记录按键内容，以免泄露 PIN。
 
 2026-09-10 在 192.168.88.177 的模块上只执行能力查询，`AT+VTS=?` 返回 `+VTS: (0-9,A-D,*,#),(0-255)` / `OK`，`AT+VTD=?` 返回 `+VTD: (0-255),(0-255)` / `OK`。命令格式与时长单位参见 [Quectel EC25/EC21 AT 手册 §12.4–12.5](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。尚未进行真实 IVR 按键测试。
+
+## 临时通话录音调试
+
+在 `config.toml` 中开启并重启服务：
+
+```toml
+[calls]
+debug_recording_enabled = true
+```
+
+默认关闭。开启后，浏览器和 iOS 的通话音频 WebSocket 建立时自动开始录音，断开/挂断自动停止；不录制独立 audio diagnostic 会话。无需客户端调用开始/停止接口。
+
+录音在内存中保留最近 3 次，每次任一方向达到 5 分钟 PCM 时停止整个录音，状态返回 `truncated=true`。重启会清空，及时下载。没有后台磁盘写入，不修改音频幅值。所有下列接口使用 bridge Bearer 鉴权：
+
+- `GET /api/v1/audio/recordings`：返回配置启用状态及录音列表（call_id、UTC 开始/停止时间、active、truncated、每轨字节数与音频时长）。
+- `GET /api/v1/calls/{call_id}/recording`：查询一次录音。
+- `GET /api/v1/calls/{call_id}/recording/client_to_bridge.wav`：客户端通过 WS 发来的原始 PCM，在进入播放队列前截取。包含随后可能因队列满而丢弃的帧。
+- `GET /api/v1/calls/{call_id}/recording/bridge_to_client.wav`：bridge 成功交给 WS 发送的 PCM；不表示客户端已收到或播放。
+- `DELETE /api/v1/calls/{call_id}/recording`：删除录音，重复删除仍返回 204；若正在录制，则停止并丢弃该次录音。
+
+两个文件均为 8kHz、单声道、16-bit little-endian PCM WAV；不混音、不归一化、不插入补偿静音。各轨按帧顺序拼接，网络等待时间不会转为空白，因此两个方向并非共同时间轴。正在录音时下载得到请求时刻的快照，建议挂断后下载完整结果。
+
+```sh
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  "$ENDPOINT/api/v1/audio/recordings"
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  "$ENDPOINT/api/v1/calls/$CALL_ID/recording/client_to_bridge.wav" \
+  -o client_to_bridge.wav
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  "$ENDPOINT/api/v1/calls/$CALL_ID/recording/bridge_to_client.wav" \
+  -o bridge_to_client.wav
+```
+
+客户端应分别保存「编码后发送前的 PCM」与「收到后解码前的 PCM」，保留原始幅值。前者与 client_to_bridge 比较，后者与 bridge_to_client 比较；额外保存麦克风原始输入和最终播放输入，可进一步定位转换环节。仅比较音频样本，不比较 WAV 文件头。
+
+调试结束将开关设为 false 并重启。实现集中于 `audio/recording.py`，其余只有配置/服务装配、WS 录音调用和读取/删除 API；无数据库迁移、无新依赖，可独立移除。
