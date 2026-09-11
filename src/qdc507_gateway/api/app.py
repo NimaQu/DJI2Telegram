@@ -50,7 +50,7 @@ class CallDevice(BaseModel):
 
 
 class CallDTMF(CallDevice):
-    digits: str = Field(min_length=1, max_length=1, pattern=r"^[0-9*#A-D]$")
+    digit: str = Field(min_length=1, max_length=1, pattern=r"^[0-9*#A-D]$")
 
 
 async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
@@ -326,7 +326,7 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
         if handler is None:
             raise HTTPException(status_code=503, detail="DTMF service is unavailable")
         try:
-            return await handler(call_id, str(payload.installation_id), payload.digits)
+            return await handler(call_id, str(payload.installation_id), payload.digit)
         except CallBridgeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:

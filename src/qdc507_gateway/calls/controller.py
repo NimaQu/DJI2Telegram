@@ -107,8 +107,8 @@ class ClientCallController:
             raise CallBridgeError("call is not owned by this installation")
         return record
 
-    async def send_dtmf(self, call_id: str, installation_id: str, digits: str):
-        if len(digits) != 1 or digits not in "0123456789*#ABCD":
+    async def send_dtmf(self, call_id: str, installation_id: str, digit: str):
+        if len(digit) != 1 or digit not in "0123456789*#ABCD":
             raise CallBridgeError("DTMF requires one keypad character")
         async with self._operation_lock:
             self.start_guard()
@@ -119,7 +119,7 @@ class ClientCallController:
                 raise RuntimeError("DTMF service is unavailable")
             # Keep the operation lock until the modem finishes, even if the
             # HTTP task is cancelled while its serial command is in flight.
-            pending = asyncio.create_task(self.cellular_dtmf(digits))
+            pending = asyncio.create_task(self.cellular_dtmf(digit))
             cancelled = False
             while not pending.done():
                 try:

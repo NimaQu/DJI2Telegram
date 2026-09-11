@@ -158,7 +158,7 @@ POST /api/v1/calls/{call_id}/dtmf
 Authorization: Bearer <bridge-api-token>
 Content-Type: application/json
 
-{"installation_id":"<本机注册的UUID>","digits":"1"}
+{"installation_id":"<本机注册的UUID>","digit":"1"}
 ```
 
 成功返回 `200`：`{"call_id":"…","accepted":true}`。每次请求一个字符：`0–9`、`*`、`#` 或大写 `A–D`；普通拨号盘只需使用前十二个键。模块执行 `AT+VTS="1",1`，持续 100ms，不改变全局 `AT+VTD` 配置。客户端按顺序等待上一个请求结束再发送下一个，不要同时向 PCM 注入同一个按键音。

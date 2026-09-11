@@ -209,9 +209,9 @@ def build_app(settings: Optional[Settings] = None):
             require_installation(installation_id)
         return await web_call_controller.hangup(call_id, installation_id=installation_id, client=True)
 
-    async def send_client_dtmf(call_id: str, installation_id: str, digits: str):
+    async def send_client_dtmf(call_id: str, installation_id: str, digit: str):
         require_installation(installation_id)
-        return await web_call_controller.send_dtmf(call_id, installation_id, digits)
+        return await web_call_controller.send_dtmf(call_id, installation_id, digit)
 
     async def current_client_call():
         record = await call_coordinator.current()

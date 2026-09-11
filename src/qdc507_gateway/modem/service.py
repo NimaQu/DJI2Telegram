@@ -1112,11 +1112,11 @@ class LiveModuleService:
         await self.events.publish(GatewayEvent("call.cellular.dialing", {"number": normalized}))
         return result
 
-    async def send_dtmf(self, digits: str) -> dict[str, Any]:
-        if len(digits) != 1 or digits not in "0123456789*#ABCD":
+    async def send_dtmf(self, digit: str) -> dict[str, Any]:
+        if len(digit) != 1 or digit not in "0123456789*#ABCD":
             raise ModuleServiceError("DTMF requires one keypad character")
         # VTS duration is in tenths of a second; avoid changing global VTD.
-        result = await self.at(f'AT+VTS="{digits}",1', timeout_ms=3000)
+        result = await self.at(f'AT+VTS="{digit}",1', timeout_ms=3000)
         if not result["ok"]:
             raise ModuleServiceError("modem rejected DTMF")
         return {"accepted": True}

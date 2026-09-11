@@ -46,7 +46,7 @@ async def test_owner_state_and_stale_call():
 async def test_cancelled_request_keeps_hangup_serialized():
     control, call = await active_call()
     entered, release = asyncio.Event(), asyncio.Event()
-    async def blocked(digits):
+    async def blocked(digit):
         entered.set()
         await release.wait()
     control.cellular_dtmf = blocked
@@ -70,9 +70,9 @@ async def test_modem_command_and_errors():
     service.at = AsyncMock(return_value={'ok': True})
     assert await service.send_dtmf('*') == {'accepted': True}
     service.at.assert_awaited_once_with('AT+VTS="*",1', timeout_ms=3000)
-    for digits in ('', '12', '";ATH', '\n', 'a'):
+    for digit in ('', '12', '";ATH', '\n', 'a'):
         with pytest.raises(ModuleServiceError):
-            await service.send_dtmf(digits)
+            await service.send_dtmf(digit)
     service.at.return_value = {'ok': False}
     with pytest.raises(ModuleServiceError, match='rejected'):
         await service.send_dtmf('1')
@@ -84,11 +84,11 @@ def test_api_auth_validation_and_errors():
     handler = AsyncMock(return_value={'call_id': 'call', 'accepted': True})
     client = TestClient(create_app(db, EventBus(), {'send_dtmf': handler}))
     url = '/api/v1/calls/call/dtmf'
-    payload = {'installation_id': str(uuid.uuid4()), 'digits': '1'}
+    payload = {'installation_id': str(uuid.uuid4()), 'digit': '1'}
     headers = {'Authorization': 'Bearer test'}
     assert client.post(url, json=payload).status_code == 401
-    for invalid in ({}, {**payload, 'digits': '12'}, {**payload, 'installation_id': 'bad'},
-                    {**payload, 'digits': '\n'}, {**payload, 'digits': 1}):
+    for invalid in ({}, {**payload, 'digit': '12'}, {**payload, 'installation_id': 'bad'},
+                    {**payload, 'digit': '\n'}, {**payload, 'digit': 1}):
         assert client.post(url, json=invalid, headers=headers).status_code == 422
     handler.assert_not_called()
     assert client.post(url, json=payload, headers=headers).json()['accepted'] is True
