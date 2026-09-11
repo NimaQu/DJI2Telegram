@@ -168,24 +168,3 @@ Content-Type: application/json
 服务不可用返回 `503`；模块拒绝、超时等失败返回 `502`。**不自动重试**：超时可能意味着按键已发出，重复提交会输入两次。`accepted` 仅表示模块返回 OK，不保证对端 IVR 已识别；远端实际挂断与状态上报之间也可能存在短暂延迟。服务不记录按键内容，以免泄露 PIN。
 
 2026-09-10 在 192.168.88.177 的模块上只执行能力查询，`AT+VTS=?` 返回 `+VTS: (0-9,A-D,*,#),(0-255)` / `OK`，`AT+VTD=?` 返回 `+VTD: (0-255),(0-255)` / `OK`。命令格式与时长单位参见 [Quectel EC25/EC21 AT 手册 §12.4–12.5](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。尚未进行真实 IVR 按键测试。
-
-## 临时通话录音调试
-
-在 `config.toml` 中开启并重启服务：
-
-```toml
-[calls]
-debug_recording_enabled = true
-```
-
-默认关闭。开启后浏览器和 iOS 通话音频 WebSocket 自动录制，断开/挂断后自动保存到服务器本地 `<app.data_dir>/debug-recordings/<UTC时间>-<唯一ID>/`，无需录音 API。每次包含：
-
-- `client_to_bridge.wav`：客户端通过 WS 发来的原始 PCM，在进入播放队列前截取，包含随后可能因队列满而丢弃的帧。
-- `bridge_to_client.wav`：bridge 成功交给 WS 发送的 PCM，不代表客户端已收到或播放。
-- `metadata.json`：call_id、UTC 开始/停止时间、格式、每轨时长及是否达到容量限制。
-
-两个 WAV 均为 8kHz、单声道、16-bit little-endian PCM，不混音、不调整幅值、不插入补偿静音。各轨按帧顺序拼接，网络等待时间不会转为空白，因此两个方向并非共同时间轴。客户端分别保存「编码后发送前」和「收到后解码前」的 PCM，与这两轨对照。
-
-通话过程中只使用有界内存，任一方向达到 5 分钟 PCM 后停止采集；挂断后在线程中写入文件，不阻塞音频事件循环。进程异常退出会丢失尚未保存的录音；已保存文件重启后仍保留，按需手动清理。保存失败只记录错误类型，不影响通话清理；不录制独立 audio diagnostic 会话。
-
-调试结束将开关设为 false 并重启。实现集中于 `audio/recording.py`，其余只有配置/服务装配与 WS 调用；无录音 API、数据库迁移或新依赖，方便独立移除。

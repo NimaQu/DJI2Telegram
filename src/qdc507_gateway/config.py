@@ -79,7 +79,6 @@ class Settings:
     module_voice_manifest: Path | None = None
     module_voice_resource_dir: Path | None = None
     incoming_call_frontend: str = "app"
-    debug_recording_enabled: bool = False
     log_level: str = "INFO"
     auth_max_failures: int = 10
     auth_failure_window_seconds: int = 300
@@ -227,7 +226,6 @@ class Settings:
                 "module.voice_resource_dir",
             ),
             incoming_call_frontend=frontend.strip().lower(),
-            debug_recording_enabled=_boolean(calls.get("debug_recording_enabled", False), "calls.debug_recording_enabled"),
             log_level=log_level_value.strip().upper(),
             auth_max_failures=_positive_int(
                 security.get("auth_max_failures", 10),
