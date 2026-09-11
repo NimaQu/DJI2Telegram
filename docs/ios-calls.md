@@ -150,3 +150,21 @@ Content-Type: application/json
 bridge 的播放缓冲先积累 3 帧（60 ms），缓冲耗尽后重新积累并逐步增加目标，最多 6 帧（120 ms）。最多保存 20 帧（400 ms），超过上限仍丢弃最旧音频，避免延迟无限增长。ALSA 由独立线程按单调时钟的绝对 20 ms 截止时间连续供给，避免写入立即返回时过快消耗队列；欠载后重写原帧，短写只补写剩余采样。该处理不改变 WebSocket 音频协议，也无法恢复客户端未发送的音频。
 
 `audio.state` 的停止记录包含本次统计。`client_to_cellular` 中 `underruns` 是运行中缓冲耗尽次数，`startup_silence_periods` 与 `rebuffer_silence_periods` 分别记录启动和运行中等待补充音频的 20 ms 周期。`dropped` 是溢出丢帧；`max_interarrival_ms`、`gaps_over_40ms`、`audio_received_ms` 和 `last_frame_ms` 帮助检查供给节奏。ALSA 的 `playback_recoveries` 记录欠载重试，`write_failures` 记录未恢复的写入失败。
+
+## 通话按键（DTMF）
+
+```http
+POST /api/v1/calls/{call_id}/dtmf
+Authorization: Bearer <bridge-api-token>
+Content-Type: application/json
+
+{"installation_id":"<本机注册的UUID>","digits":"1"}
+```
+
+成功返回 `200`：`{"call_id":"…","accepted":true}`。每次请求一个字符：`0–9`、`*`、`#` 或大写 `A–D`；普通拨号盘只需使用前十二个键。模块执行 `AT+VTS="1",1`，持续 100ms，不改变全局 `AT+VTD` 配置。客户端按顺序等待上一个请求结束再发送下一个，不要同时向 PCM 注入同一个按键音。
+
+只允许当前已接通（`active`）、音频已连接的 app 通话；`installation_id` 必须已注册且与通话 owner 一致。未接听、另一台设备、旧 call_id 或已结束通话返回 `409`，无效参数 `422`，Bearer 缺失或错误 `401`。该接口不用于浏览器通话。归属校验和 AT 命令与接听、挂断共用操作锁，排队后的请求重新检查通话；请求取消也要等待在途 AT 命令结束后才释放锁。设备 ID 是协调标识，并非独立凭据，持有共享 Bearer 的客户端仍属于同一信任域。
+
+服务不可用返回 `503`；模块拒绝、超时等失败返回 `502`。**不自动重试**：超时可能意味着按键已发出，重复提交会输入两次。`accepted` 仅表示模块返回 OK，不保证对端 IVR 已识别；远端实际挂断与状态上报之间也可能存在短暂延迟。服务不记录按键内容，以免泄露 PIN。
+
+2026-09-10 在 192.168.88.177 的模块上只执行能力查询，`AT+VTS=?` 返回 `+VTS: (0-9,A-D,*,#),(0-255)` / `OK`，`AT+VTD=?` 返回 `+VTD: (0-255),(0-255)` / `OK`。命令格式与时长单位参见 [Quectel EC25/EC21 AT 手册 §12.4–12.5](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。尚未进行真实 IVR 按键测试。

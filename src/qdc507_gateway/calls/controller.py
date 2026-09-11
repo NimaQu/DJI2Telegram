@@ -22,11 +22,13 @@ class ClientCallController:
         audio_stop: Callable[[], Awaitable[Any]],
         record_sink: Optional[Callable[[CallRecord], Awaitable[Any]]] = None,
         timeout_seconds: float = 60.0,
+        cellular_dtmf: Optional[Callable[[str], Awaitable[Any]]] = None,
     ):
         self.coordinator = coordinator
         self.cellular_dial = cellular_dial
         self.cellular_answer = cellular_answer
         self.cellular_hangup = cellular_hangup
+        self.cellular_dtmf = cellular_dtmf
         self.audio_start = audio_start
         self.audio_stop = audio_stop
         self.record_sink = record_sink
@@ -104,6 +106,34 @@ class ClientCallController:
         if record.frontend == "app" and (not installation_id or record.owner_installation_id != installation_id):
             raise CallBridgeError("call is not owned by this installation")
         return record
+
+    async def send_dtmf(self, call_id: str, installation_id: str, digits: str):
+        if len(digits) != 1 or digits not in "0123456789*#ABCD":
+            raise CallBridgeError("DTMF requires one keypad character")
+        async with self._operation_lock:
+            self.start_guard()
+            record = await self.require_owner(call_id, installation_id)
+            if record.frontend != "app" or record.state != CallState.active or not self._audio_attached:
+                raise CallBridgeError("DTMF requires an active app call with attached audio")
+            if self.cellular_dtmf is None:
+                raise RuntimeError("DTMF service is unavailable")
+            # Keep the operation lock until the modem finishes, even if the
+            # HTTP task is cancelled while its serial command is in flight.
+            pending = asyncio.create_task(self.cellular_dtmf(digits))
+            cancelled = False
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+                except Exception:
+                    break
+            if cancelled:
+                if not pending.cancelled():
+                    pending.exception()
+                raise asyncio.CancelledError
+            pending.result()
+            return {"call_id": record.id, "accepted": True}
 
     async def reserve_audio(self, call_id: str, installation_id: Optional[str]):
         async with self._operation_lock:
@@ -285,4 +315,3 @@ class ClientCallController:
             return
         except CallBridgeError:
             return
-

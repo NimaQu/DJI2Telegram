@@ -152,6 +152,7 @@ def build_app(settings: Optional[Settings] = None):
         cellular_dial=module_service.dial,
         cellular_answer=module_service.answer,
         cellular_hangup=module_service.hangup,
+        cellular_dtmf=module_service.send_dtmf,
         audio_start=audio_adapter.start_web,
         audio_stop=audio_adapter.stop,
         record_sink=record_call,
@@ -208,6 +209,10 @@ def build_app(settings: Optional[Settings] = None):
             require_installation(installation_id)
         return await web_call_controller.hangup(call_id, installation_id=installation_id, client=True)
 
+    async def send_client_dtmf(call_id: str, installation_id: str, digits: str):
+        require_installation(installation_id)
+        return await web_call_controller.send_dtmf(call_id, installation_id, digits)
+
     async def current_client_call():
         record = await call_coordinator.current()
         return record if record is not None and record.frontend in {"web", "app"} else None
@@ -246,6 +251,7 @@ def build_app(settings: Optional[Settings] = None):
     state["authorize_adb"] = module_service.authorize_adb
     state["current_call"] = current_client_call
     state["hangup"] = hangup_client_call
+    state["send_dtmf"] = send_client_dtmf
     state["start_web_call"] = start_web_outbound
     state["answer_web_call"] = answer_client_call
     state["issue_audio_ticket"] = issue_audio_ticket

@@ -49,6 +49,10 @@ class CallDevice(BaseModel):
     installation_id: UUID
 
 
+class CallDTMF(CallDevice):
+    digits: str = Field(min_length=1, max_length=1, pattern=r"^[0-9*#A-D]$")
+
+
 async def sse_event_stream(events: EventBus, keepalive_seconds: float = 25.0):
     """Stream events without cancelling the subscription on each keepalive.
 
@@ -315,6 +319,18 @@ def create_app(database: Database, events: EventBus, state: Optional[Dict[str, A
             return asdict(result)
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/calls/{call_id}/dtmf")
+    async def send_dtmf(call_id: str, payload: CallDTMF, _: str = Depends(require_token)):
+        handler = state.get("send_dtmf")
+        if handler is None:
+            raise HTTPException(status_code=503, detail="DTMF service is unavailable")
+        try:
+            return await handler(call_id, str(payload.installation_id), payload.digits)
+        except CallBridgeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail="DTMF delivery failed or is uncertain; do not automatically retry") from exc
 
     @app.post("/api/v1/calls/{call_id}/audio-ticket")
     async def audio_ticket(call_id: str, payload: Optional[CallDevice] = None, _: str = Depends(require_token)):
