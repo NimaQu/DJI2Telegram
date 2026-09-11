@@ -158,7 +158,7 @@ def build_app(settings: Optional[Settings] = None):
         record_sink=record_call,
     )
     audio_tickets = AudioTicketStore()
-    web_audio_session = WebAudioSession(web_call_controller, audio_adapter, debug_recording_enabled=settings.debug_recording_enabled)
+    web_audio_session = WebAudioSession(web_call_controller, audio_adapter, debug_recording_enabled=settings.debug_recording_enabled, recording_directory=settings.data_dir / "debug-recordings")
     web_audio_diagnostic = WebAudioDiagnosticService(
         call_coordinator,
         audio_adapter,
@@ -251,7 +251,6 @@ def build_app(settings: Optional[Settings] = None):
     state["authorize_adb"] = module_service.authorize_adb
     state["current_call"] = current_client_call
     state["hangup"] = hangup_client_call
-    state["recordings"] = web_audio_session.recordings
     state["send_dtmf"] = send_client_dtmf
     state["start_web_call"] = start_web_outbound
     state["answer_web_call"] = answer_client_call

@@ -116,6 +116,7 @@ class WebAudioSession:
         audio_adapter: Any,
         startup_timeout_seconds: float = 3.0,
         debug_recording_enabled: bool = False,
+        recording_directory=None,
     ):
         self.controller = controller
         self.audio_adapter = audio_adapter
@@ -123,7 +124,7 @@ class WebAudioSession:
         self.frames_to_browser = 0
         self.frames_from_browser = 0
         self.invalid_messages = 0
-        self.recordings = DebugRecordings(debug_recording_enabled)
+        self.recordings = DebugRecordings(debug_recording_enabled, recording_directory)
 
     async def run(self, websocket: Any, call_id: str, installation_id: Optional[str] = None) -> None:
         reserve = getattr(self.controller, "reserve_audio", None)
@@ -145,9 +146,10 @@ class WebAudioSession:
                     self.audio_adapter.pcm_bridge.push_client(frame)
             await self.stream(websocket, call_id, session_type="call")
         finally:
-            if call_id in self.recordings.records:
-                self.recordings.stop(call_id)
-            await self.controller.websocket_disconnected(call_id)
+            try:
+                await self.controller.websocket_disconnected(call_id)
+            finally:
+                await self.recordings.finish(call_id)
 
     async def _receive_initial_audio(self, websocket: Any) -> list[PCMFrame]:
         """Require browser microphone PCM before ALSA startup and cellular dialing."""

@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from qdc507_gateway.audio.recording import DebugRecordings
 from qdc507_gateway.api.app import create_app
 from qdc507_gateway.events import EventBus
-from qdc507_gateway.security import hash_token
 from qdc507_gateway.storage.database import Database
 from qdc507_gateway.web.calls import WebAudioSession
 
@@ -47,23 +46,9 @@ async def test_ws_records_input_before_queue_acceptance():
     assert session.recordings.snapshot('call', 'client_to_bridge') == pcm
 
 
-def test_recording_api_auth_download_and_delete():
-    db = Database(':memory:')
-    db.replace_token(hash_token('test'), 'now')
-    recordings = DebugRecordings(enabled=True)
-    recordings.start('call')
-    recordings.append('call', 'bridge_to_client', b'\x01\x00' * 160)
-    client = TestClient(create_app(db, EventBus(), {'recordings': recordings}))
-    headers = {'Authorization': 'Bearer test'}
-    url = '/api/v1/calls/call/recording'
-    assert client.get(url).status_code == 401
-    assert client.get(url, headers=headers).json()['active']
-    result = client.get(url + '/bridge_to_client.wav', headers=headers)
-    assert result.content[:4] == b'RIFF'
-    assert client.get(url + '/invalid.wav', headers=headers).status_code == 422
-    assert client.get('/api/v1/audio/recordings', headers=headers).json()['enabled']
-    assert client.delete(url, headers=headers).status_code == 204
-    assert client.get(url, headers=headers).status_code == 404
+def test_recording_apis_removed():
+    client = TestClient(create_app(Database(':memory:'), EventBus()))
+    assert not any('recording' in path for path in client.get('/openapi.json').json()['paths'])
 
 
 def test_config_switch_and_disabled_recording(tmp_path):
@@ -83,14 +68,14 @@ def test_config_switch_and_disabled_recording(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_auto_start_stop_and_output_bytes():
+async def test_auto_start_stop_and_output_bytes(tmp_path):
     from unittest.mock import AsyncMock
     from qdc507_gateway.audio.ring import PCMFrame
     controller = SimpleNamespace(reserve_audio=AsyncMock(), attach_audio=AsyncMock(),
                                  websocket_disconnected=AsyncMock())
     pcm = b'\x00\x80\xff\x7f' * 80
     bridge = SimpleNamespace(pull_for_client=lambda: PCMFrame(pcm))
-    session = WebAudioSession(controller, SimpleNamespace(pcm_bridge=bridge), debug_recording_enabled=True)
+    session = WebAudioSession(controller, SimpleNamespace(pcm_bridge=bridge), debug_recording_enabled=True, recording_directory=tmp_path)
     class Finished(Exception):
         pass
     class Socket:
@@ -104,6 +89,20 @@ async def test_auto_start_stop_and_output_bytes():
     session.stream = stream
     with pytest.raises(Finished):
         await session.run(Socket(), 'call', 'owner')
-    assert not session.recordings.status('call')['active']
-    assert session.recordings.snapshot('call', 'bridge_to_client') == pcm
+    assert not session.recordings.records
+    files = list(tmp_path.glob('*/bridge_to_client.wav'))
+    assert len(files) == 1
+    with wave.open(str(files[0])) as wav:
+        assert wav.readframes(160) == pcm
     controller.websocket_disconnected.assert_awaited_once_with('call')
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_does_not_break_cleanup(tmp_path, caplog):
+    blocked = tmp_path / 'file'
+    blocked.write_text('not a directory')
+    recordings = DebugRecordings(True, blocked)
+    recordings.start('call')
+    await recordings.finish('call')
+    assert not recordings.records
+    assert 'debug recording save failed' in caplog.text

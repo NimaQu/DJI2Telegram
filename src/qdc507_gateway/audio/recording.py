@@ -1,4 +1,10 @@
 """Bounded, opt-in recording of unmodified PCM at the WebSocket boundary."""
+import asyncio
+import json
+import logging
+import uuid
+from pathlib import Path
+
 import io
 import wave
 from collections import OrderedDict
@@ -9,7 +15,8 @@ class DebugRecordings:
     LIMIT = 8000 * 2 * 300
     DIRECTIONS = ('client_to_bridge', 'bridge_to_client')
 
-    def __init__(self, enabled=False):
+    def __init__(self, enabled=False, directory=None):
+        self.directory = Path(directory) if directory is not None else None
         self.enabled = enabled
         self.records = OrderedDict()
 
@@ -66,3 +73,36 @@ class DebugRecordings:
             writer.setframerate(8000)
             writer.writeframes(data)
         return output.getvalue()
+
+    async def finish(self, call_id):
+        if call_id not in self.records:
+            return
+        metadata = self.stop(call_id)
+        record = self.records.pop(call_id)
+        if self.directory is None:
+            return
+        task = asyncio.create_task(asyncio.to_thread(self._save, record, metadata))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    def _save(self, record, metadata):
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ-') + uuid.uuid4().hex
+            directory = self.directory / name
+            directory.mkdir(mode=0o700)
+            for direction, data in record['tracks'].items():
+                path = directory / (direction + '.wav')
+                with path.open('xb') as output:
+                    path.chmod(0o600)
+                    output.write(self.wav(data))
+            path = directory / 'metadata.json'
+            with path.open('x', encoding='utf-8') as output:
+                path.chmod(0o600)
+                json.dump(metadata, output, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            # Debug storage failures must not break call cleanup or expose audio.
+            logging.getLogger(__name__).error('debug recording save failed: %s', type(exc).__name__)

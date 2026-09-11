@@ -27,8 +27,8 @@ auth_failure_window_seconds = 300
 auth_block_seconds = 900
 
 [calls]
-# Temporary WS PCM debugging: two WAV tracks, latest 3 calls in memory, up to 5 minutes each.
-# Restart required; recordings disappear on restart.
+# Temporary WS PCM debugging: up to 5 minutes per call.
+# Saves two WAV tracks under app.data_dir/debug-recordings after hangup; restart required.
 debug_recording_enabled = false
 incoming_frontend = "app" # app (PushKit/CallKit), web, or auto
 # auto selects app; use server.enabled=true for client calls.
