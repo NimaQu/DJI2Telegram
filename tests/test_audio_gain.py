@@ -27,7 +27,7 @@ def test_gain_config_and_exact_samples(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_both_ws_directions_scaled_once():
+async def test_only_client_to_module_is_scaled():
     data = struct.pack('<h', 10000) * 160
     received = []
     pcm = SimpleNamespace(push_client=lambda frame: received.append(frame),
@@ -40,7 +40,7 @@ async def test_both_ws_directions_scaled_once():
         async def receive(self):
             return next(messages)
         async def send_bytes(self, output):
-            assert output == struct.pack('<h', 9000) * 160
+            assert output == data
             raise Finished
     await session._receive_audio(Socket())
     assert received[0].data == struct.pack('<h', 9000) * 160

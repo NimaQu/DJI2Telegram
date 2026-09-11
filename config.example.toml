@@ -27,7 +27,7 @@ auth_failure_window_seconds = 300
 auth_block_seconds = 900
 
 [calls]
-# Multiply PCM amplitude in BOTH directions; 0=mute, 1=unchanged. Restart required.
+# Multiply client-to-module PCM amplitude only; 0=mute uplink, 1=unchanged. Restart required.
 audio_gain = 1.0
 incoming_frontend = "app" # app (PushKit/CallKit), web, or auto
 # auto selects app; use server.enabled=true for client calls.

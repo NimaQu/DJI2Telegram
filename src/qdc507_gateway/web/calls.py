@@ -261,7 +261,7 @@ class WebAudioSession:
             while len(pending) >= AUDIO_FRAME_BYTES:
                 chunk = bytes(pending[:AUDIO_FRAME_BYTES])
                 del pending[:AUDIO_FRAME_BYTES]
-                await websocket.send_bytes(scale_pcm16(chunk, self.audio_gain))
+                await websocket.send_bytes(chunk)
                 self.frames_to_browser += 1
 
     async def _receive_audio(self, websocket: Any) -> None:
